@@ -1,4 +1,11 @@
-const CARD_VERSION = "0.3.14";
+const MODULE_URL = new URL(import.meta.url);
+const RESOURCE_VERSION = MODULE_URL.searchParams.get("v") || "";
+
+function withResourceVersion(path) {
+  if (!RESOURCE_VERSION) return path;
+  const separator = path.includes("?") ? "&" : "?";
+  return `${path}${separator}v=${encodeURIComponent(RESOURCE_VERSION)}`;
+}
 
 const TREE_CACHE_MAX_AGE = 6 * 24 * 60 * 60 * 1000;
 const FAMILY_TREE_CACHE = new Map();
@@ -40,9 +47,9 @@ const DEFAULT_CONFIG = {
 const GENDER_LABEL = { male: "Nam", female: "Nữ", other: "Khác" };
 
 const DEFAULT_AVATAR_URLS = {
-  male: "/cay_gia_pha_static/avatar-male.svg?v=0.3.14",
-  female: "/cay_gia_pha_static/avatar-female.svg?v=0.3.14",
-  other: "/cay_gia_pha_static/avatar-placeholder.svg?v=0.3.14",
+  male: withResourceVersion("/cay_gia_pha_static/avatar-male.svg"),
+  female: withResourceVersion("/cay_gia_pha_static/avatar-female.svg"),
+  other: withResourceVersion("/cay_gia_pha_static/avatar-placeholder.svg"),
 };
 
 const FONT_OPTIONS = [
@@ -2590,4 +2597,4 @@ if (!window.customCards.some((card) => card.type === "cay-gia-pha-card")) {
   });
 }
 
-console.info(`%c CÂY GIA PHẢ %c v${CARD_VERSION} `, "color:white;background:#655f55;font-weight:700;padding:2px 6px;border-radius:4px 0 0 4px", "color:#655f55;background:#eeeae0;padding:2px 6px;border-radius:0 4px 4px 0");
+console.info(`%c CÂY GIA PHẢ %c ${RESOURCE_VERSION ? `v${RESOURCE_VERSION}` : ""} `, "color:white;background:#655f55;font-weight:700;padding:2px 6px;border-radius:4px 0 0 4px", "color:#655f55;background:#eeeae0;padding:2px 6px;border-radius:0 4px 4px 0");
