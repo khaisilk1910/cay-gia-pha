@@ -877,7 +877,7 @@ def _preview_placeholders(
             GENDER_MALE: "avatar-male.svg",
             GENDER_FEMALE: "avatar-female.svg",
         }.get(gender, "avatar-placeholder.svg")
-        preview_url = f"{FRONTEND_STATIC_URL}/{default_avatar}?v=0.3.11"
+        preview_url = f"{FRONTEND_STATIC_URL}/{default_avatar}?v=0.3.12"
         preview_note = "Ảnh đại diện mặc định theo giới tính"
     return {"preview_url": preview_url, "preview_note": preview_note}
 

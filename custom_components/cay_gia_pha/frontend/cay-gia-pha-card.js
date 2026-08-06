@@ -1,4 +1,4 @@
-const CARD_VERSION = "0.3.11";
+const CARD_VERSION = "0.3.12";
 
 const DEFAULT_CONFIG = {
   title: "Gia Phả Cụ Tiến Tiệp",
@@ -28,6 +28,7 @@ const DEFAULT_CONFIG = {
   show_decorations: true,
   deceased_grayscale: true,
   show_zoom: true,
+  initial_zoom: 50,
   limit_initial_generations: false,
   initial_generation_limit: 3,
 };
@@ -35,9 +36,9 @@ const DEFAULT_CONFIG = {
 const GENDER_LABEL = { male: "Nam", female: "Nữ", other: "Khác" };
 
 const DEFAULT_AVATAR_URLS = {
-  male: "/cay_gia_pha_static/avatar-male.svg?v=0.3.11",
-  female: "/cay_gia_pha_static/avatar-female.svg?v=0.3.11",
-  other: "/cay_gia_pha_static/avatar-placeholder.svg?v=0.3.11",
+  male: "/cay_gia_pha_static/avatar-male.svg?v=0.3.12",
+  female: "/cay_gia_pha_static/avatar-female.svg?v=0.3.12",
+  other: "/cay_gia_pha_static/avatar-placeholder.svg?v=0.3.12",
 };
 
 const FONT_OPTIONS = [
@@ -63,7 +64,7 @@ class CayGiaPhaCard extends HTMLElement {
     this._error = null;
     this._requestKey = null;
     this._selectedPersonId = null;
-    this._zoom = 0.5;
+    this._zoom = DEFAULT_CONFIG.initial_zoom / 100;
     this._needsInitialCenter = true;
     this._pendingViewport = null;
     this._collapsedFamilies = new Set();
@@ -124,7 +125,7 @@ class CayGiaPhaCard extends HTMLElement {
     this._requestKey = null;
     this._tree = null;
     this._error = null;
-    this._zoom = 0.5;
+    this._zoom = this._initialZoom();
     this._needsInitialCenter = true;
     this._collapsedFamilies.clear();
     this._initialGenerationApplied = false;
@@ -354,7 +355,7 @@ class CayGiaPhaCard extends HTMLElement {
         const currentScroller = this.shadowRoot.querySelector(".tree-scroll");
         if (action === "in") this._setZoom(this._zoom + 0.1, currentScroller);
         if (action === "out") this._setZoom(this._zoom - 0.1, currentScroller);
-        if (action === "reset") this._setZoom(0.5, currentScroller, null, null, true);
+        if (action === "reset") this._setZoom(this._initialZoom(), currentScroller, null, null, true);
       });
     });
   }
@@ -426,8 +427,12 @@ class CayGiaPhaCard extends HTMLElement {
     }, { passive: false });
   }
 
+  _initialZoom() {
+    return clampNumber(this._config?.initial_zoom, 50, 160, 50) / 100;
+  }
+
   _setZoom(nextZoom, scroller = null, clientX = null, clientY = null, center = false) {
-    const zoom = clampNumber(nextZoom, 0.5, 1.6, 0.5);
+    const zoom = clampNumber(nextZoom, 0.5, 1.6, this._initialZoom());
     if (Math.abs(zoom - this._zoom) < 0.001) {
       if (center && scroller) {
         this._pendingViewport = { mode: "center", top: 0 };
@@ -473,7 +478,7 @@ class CayGiaPhaCard extends HTMLElement {
       return `<div class="message empty"><ha-icon icon="mdi:account-plus-outline"></ha-icon><span>Chưa có cá thể trong cây gia phả.</span></div>`;
     }
 
-    const zoom = clampNumber(this._zoom, 0.5, 1.6, 0.5);
+    const zoom = clampNumber(this._zoom, 0.5, 1.6, this._initialZoom());
     const scene = this._config.show_decorations
       ? this._decorativeScene(layout.width, layout.height)
       : "";
@@ -1411,7 +1416,7 @@ class CayGiaPhaCard extends HTMLElement {
     return `
       <div class="zoom-controls" aria-label="Thu phóng">
         <button data-zoom="out" title="Thu nhỏ"><ha-icon icon="mdi:magnify-minus-outline"></ha-icon></button>
-        <button data-zoom="reset" title="Về 50%"><span>${Math.round(this._zoom * 100)}%</span></button>
+        <button data-zoom="reset" title="Về mức mặc định ${Math.round(this._initialZoom() * 100)}%"><span>${Math.round(this._zoom * 100)}%</span></button>
         <button data-zoom="in" title="Phóng to"><ha-icon icon="mdi:magnify-plus-outline"></ha-icon></button>
       </div>
     `;
@@ -1715,16 +1720,29 @@ class CayGiaPhaCardEditor extends HTMLElement {
     this._config = { ...DEFAULT_CONFIG };
   }
 
+  connectedCallback() {
+    if (!this.shadowRoot?.childElementCount) this._render();
+  }
+
   setConfig(config) {
     const cleaned = { ...(config || {}) };
     delete cleaned.entity;
-    this._config = { ...DEFAULT_CONFIG, ...cleaned };
+    const nextConfig = { ...DEFAULT_CONFIG, ...cleaned };
+
+    // Home Assistant can call setConfig again immediately after config-changed.
+    // Avoid rebuilding the whole shadow DOM when values are unchanged, otherwise
+    // the active input or switch is replaced and loses focus mid-interaction.
+    if (sameCardConfig(this._config, nextConfig) && this.shadowRoot?.childElementCount) return;
+
+    this._config = nextConfig;
     this._render();
   }
 
   set hass(hass) {
     this._hass = hass;
-    this._render();
+    // The editor does not render state data. Re-rendering for every HA state update
+    // makes focused fields flicker on busy installations, so only render once here.
+    if (!this.shadowRoot?.childElementCount) this._render();
   }
 
   _render() {
@@ -1816,10 +1834,15 @@ class CayGiaPhaCardEditor extends HTMLElement {
         </div>
         <h3>Hiển thị ban đầu</h3>
         <div class="grid">
+          <label class="field-block full">
+            <span class="field-label">Mức thu phóng khi mở thẻ (%)</span>
+            <input class="native-field number-field" data-key="initial_zoom" type="number" min="50" max="160" step="10" inputmode="numeric" value="${escapeAttr(clampNumber(c.initial_zoom, 50, 160, 50))}">
+            <span class="hint">Chọn từ 50% đến 160%. Nút phần trăm trên thẻ sẽ đưa sơ đồ trở về đúng mức mặc định này.</span>
+          </label>
           <label class="switch full"><span>Giới hạn số thế hệ khi mở thẻ</span><ha-switch data-key="limit_initial_generations" ${c.limit_initial_generations ? "checked" : ""}></ha-switch></label>
           <label class="field-block full">
             <span class="field-label">Số thế hệ hiển thị ban đầu</span>
-            <input id="initial-generation-limit" class="native-field number-field" data-key="initial_generation_limit" type="number" min="1" max="50" step="1" value="${escapeAttr(clampNumber(c.initial_generation_limit, 1, 50, 3))}" ${c.limit_initial_generations ? "" : "disabled"}>
+            <input id="initial-generation-limit" class="native-field number-field" data-key="initial_generation_limit" type="number" min="1" max="50" step="1" inputmode="numeric" value="${escapeAttr(clampNumber(c.initial_generation_limit, 1, 50, 3))}" ${c.limit_initial_generations ? "" : "disabled"}>
             <span class="hint">Ví dụ nhập 3: khi mở thẻ chỉ hiện đến thế hệ thứ 3. Các nhánh đời sau được thu gọn và có thể mở lại bằng nút dấu cộng trên sơ đồ.</span>
           </label>
         </div>
@@ -1874,6 +1897,15 @@ class CayGiaPhaCardEditor extends HTMLElement {
       composed: true,
     }));
   }
+}
+
+function sameCardConfig(left, right) {
+  if (left === right) return true;
+  if (!left || !right) return false;
+  const leftKeys = Object.keys(left).sort();
+  const rightKeys = Object.keys(right).sort();
+  if (leftKeys.length !== rightKeys.length) return false;
+  return leftKeys.every((key, index) => key === rightKeys[index] && left[key] === right[key]);
 }
 
 function chooseFamilyAnchor(members, maps) {
