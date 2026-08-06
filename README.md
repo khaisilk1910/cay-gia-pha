@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="custom_components/cay_gia_pha/brand/logo.png" alt="Cây Gia Phả" width="420">
+  <img width="1792" height="969" alt="image" src="https://github.com/user-attachments/assets/7f938f92-c8bc-45a0-ba45-76fb1a71106e" />
 </p>
 
 # Cây Gia Phả cho Home Assistant
