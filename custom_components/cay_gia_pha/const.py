@@ -10,11 +10,11 @@ PLATFORMS: list[Platform] = [Platform.SENSOR]
 
 DATA_DIR_NAME = "cay_gia_pha"
 DATABASE_FILENAME = "cay_gia_pha.db"
-DATABASE_SCHEMA_VERSION = 4
+DATABASE_SCHEMA_VERSION = 5
 SUBENTRY_TYPE_PERSON = "person"
 
 FRONTEND_STATIC_URL = "/cay_gia_pha_static"
-FRONTEND_MODULE_URL = f"{FRONTEND_STATIC_URL}/cay-gia-pha-card.js?v=0.3.13"
+FRONTEND_MODULE_URL = f"{FRONTEND_STATIC_URL}/cay-gia-pha-card.js?v=0.3.14"
 IMAGE_API_URL = "/api/cay_gia_pha/image/{entry_id}/{person_id}"
 UPLOAD_PREVIEW_API_URL = "/api/cay_gia_pha/upload_preview/{file_id}"
 WS_TYPE_GET_TREE = "cay_gia_pha/get_tree"
@@ -40,6 +40,8 @@ CONF_MOTHER_ID = "mother_id"
 CONF_SPOUSE_ID = "spouse_id"
 CONF_SPOUSE_IDS = "spouse_ids"
 CONF_SPOUSE_ORDER = "spouse_order"
+CONF_DIVORCED_SPOUSE_IDS = "divorced_spouse_ids"
+CONF_STEP_PARENT_IDS = "step_parent_ids"
 CONF_SIBLING_IDS = "sibling_ids"
 CONF_BIRTH_ORDER = "birth_order"
 CONF_IS_ADOPTED = "is_adopted"

@@ -41,6 +41,7 @@ from .const import (
     CONF_DEATH_MONTH,
     CONF_DEATH_YEAR,
     CONF_DETAILS,
+    CONF_DIVORCED_SPOUSE_IDS,
     CONF_FATHER_ID,
     CONF_FULL_NAME,
     CONF_GENDER,
@@ -55,6 +56,7 @@ from .const import (
     CONF_RELATIONSHIP,
     CONF_SIBLING_IDS,
     CONF_SORT_ORDER,
+    CONF_STEP_PARENT_IDS,
     CONF_SPOUSE_ID,
     CONF_SPOUSE_IDS,
     CONF_SPOUSE_ORDER,
@@ -101,6 +103,8 @@ _PERSON_DATA_KEYS = {
     CONF_SPOUSE_ID,
     CONF_SPOUSE_IDS,
     CONF_SPOUSE_ORDER,
+    CONF_DIVORCED_SPOUSE_IDS,
+    CONF_STEP_PARENT_IDS,
     CONF_SIBLING_IDS,
     CONF_BIRTH_ORDER,
     CONF_IS_ADOPTED,
@@ -520,6 +524,8 @@ async def _async_prepare_person_data(
         spouse_ids.insert(0, legacy_spouse_id)
     spouse_id = spouse_ids[0] if spouse_ids else None
     spouse_order = max(1, int(user_input.get(CONF_SPOUSE_ORDER, 1) or 1))
+    divorced_spouse_ids = _string_list(user_input.get(CONF_DIVORCED_SPOUSE_IDS))
+    step_parent_ids = _string_list(user_input.get(CONF_STEP_PARENT_IDS))
     sibling_ids = _string_list(user_input.get(CONF_SIBLING_IDS))
     is_adopted = bool(user_input.get(CONF_IS_ADOPTED, False))
     birth_order = max(1, int(user_input.get(CONF_BIRTH_ORDER, 1) or 1))
@@ -530,13 +536,15 @@ async def _async_prepare_person_data(
         spouse_ids = []
         spouse_id = None
         spouse_order = 1
+        divorced_spouse_ids = []
+        step_parent_ids = []
         sibling_ids = []
         is_adopted = False
         birth_order = 1
 
     selected_ids = [
         value
-        for value in (father_id, mother_id, *spouse_ids, *sibling_ids)
+        for value in (father_id, mother_id, *spouse_ids, *divorced_spouse_ids, *step_parent_ids, *sibling_ids)
         if value
     ]
     for selected_id in selected_ids:
@@ -562,6 +570,13 @@ async def _async_prepare_person_data(
         errors[spouse_field] = "spouse_gender_mismatch"
     if gender == GENDER_FEMALE and len(legacy_spouse_choices) > 1:
         errors[CONF_SPOUSE_ID] = "only_one_husband"
+    if any(spouse_person_id not in spouse_ids for spouse_person_id in divorced_spouse_ids):
+        errors[CONF_DIVORCED_SPOUSE_IDS] = "divorced_spouse_must_be_spouse"
+    biological_parent_ids = {value for value in (father_id, mother_id) if value}
+    if biological_parent_ids & set(step_parent_ids):
+        errors[CONF_STEP_PARENT_IDS] = "step_parent_conflict"
+    if person_id in step_parent_ids:
+        errors[CONF_STEP_PARENT_IDS] = "relationship_conflict"
     if (
         gender == GENDER_FEMALE
         and spouse_id
@@ -585,7 +600,7 @@ async def _async_prepare_person_data(
         if parent_id and _creates_parent_cycle(person_id, parent_id, people):
             errors[field] = "relationship_cycle"
 
-    has_new_link = bool(father_id or mother_id or spouse_ids or sibling_ids)
+    has_new_link = bool(father_id or mother_id or spouse_ids or step_parent_ids or sibling_ids)
     legacy_related_id = _optional_string(
         current_person.get(CONF_RELATED_PERSON_ID) if current_person else None
     )
@@ -702,6 +717,8 @@ async def _async_prepare_person_data(
         CONF_SPOUSE_ID: spouse_id,
         CONF_SPOUSE_IDS: spouse_ids,
         CONF_SPOUSE_ORDER: spouse_order,
+        CONF_DIVORCED_SPOUSE_IDS: divorced_spouse_ids,
+        CONF_STEP_PARENT_IDS: step_parent_ids,
         CONF_SIBLING_IDS: sibling_ids,
         CONF_BIRTH_ORDER: birth_order,
         CONF_IS_ADOPTED: is_adopted,
@@ -877,7 +894,7 @@ def _preview_placeholders(
             GENDER_MALE: "avatar-male.svg",
             GENDER_FEMALE: "avatar-female.svg",
         }.get(gender, "avatar-placeholder.svg")
-        preview_url = f"{FRONTEND_STATIC_URL}/{default_avatar}?v=0.3.13"
+        preview_url = f"{FRONTEND_STATIC_URL}/{default_avatar}?v=0.3.14"
         preview_note = "Ảnh đại diện mặc định theo giới tính"
     return {"preview_url": preview_url, "preview_note": preview_note}
 
@@ -990,6 +1007,31 @@ def _person_relationship_schema(
                     mode=selector.SelectSelectorMode.DROPDOWN,
                 )
             )
+
+        schema[
+            _optional_list(
+                CONF_DIVORCED_SPOUSE_IDS,
+                _string_list(values.get(CONF_DIVORCED_SPOUSE_IDS)),
+            )
+        ] = selector.SelectSelector(
+            selector.SelectSelectorConfig(
+                options=spouse_options,
+                multiple=True,
+                mode=selector.SelectSelectorMode.DROPDOWN,
+            )
+        )
+        schema[
+            _optional_list(
+                CONF_STEP_PARENT_IDS,
+                _string_list(values.get(CONF_STEP_PARENT_IDS)),
+            )
+        ] = selector.SelectSelector(
+            selector.SelectSelectorConfig(
+                options=all_options,
+                multiple=True,
+                mode=selector.SelectSelectorMode.DROPDOWN,
+            )
+        )
 
         schema.update(
             {
@@ -1212,6 +1254,8 @@ def _normalize_person(
     normalized[CONF_DEATH_DATE] = partial_date_to_string(*death_parts)
     normalized[CONF_SIBLING_IDS] = _string_list(normalized.get(CONF_SIBLING_IDS))
     normalized[CONF_SPOUSE_IDS] = _person_spouse_ids(normalized)
+    normalized[CONF_DIVORCED_SPOUSE_IDS] = _string_list(normalized.get(CONF_DIVORCED_SPOUSE_IDS))
+    normalized[CONF_STEP_PARENT_IDS] = _string_list(normalized.get(CONF_STEP_PARENT_IDS))
     normalized[CONF_SPOUSE_ORDER] = max(
         1, int(normalized.get(CONF_SPOUSE_ORDER, 1) or 1)
     )

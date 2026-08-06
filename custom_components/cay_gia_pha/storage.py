@@ -26,6 +26,7 @@ from .const import (
     CONF_DEATH_MONTH,
     CONF_DEATH_YEAR,
     CONF_DETAILS,
+    CONF_DIVORCED_SPOUSE_IDS,
     CONF_FATHER_ID,
     CONF_FULL_NAME,
     CONF_GENDER,
@@ -39,6 +40,7 @@ from .const import (
     CONF_RELATIONSHIP,
     CONF_SIBLING_IDS,
     CONF_SORT_ORDER,
+    CONF_STEP_PARENT_IDS,
     CONF_SPOUSE_ID,
     CONF_SPOUSE_IDS,
     CONF_SPOUSE_ORDER,
@@ -119,6 +121,8 @@ class FamilyTreeStore:
                     spouse_id TEXT,
                     spouse_ids TEXT NOT NULL DEFAULT '[]',
                     spouse_order INTEGER NOT NULL DEFAULT 1,
+                    divorced_spouse_ids TEXT NOT NULL DEFAULT '[]',
+                    step_parent_ids TEXT NOT NULL DEFAULT '[]',
                     sibling_ids TEXT NOT NULL DEFAULT '[]',
                     birth_order INTEGER NOT NULL DEFAULT 1,
                     is_adopted INTEGER NOT NULL DEFAULT 0,
@@ -183,6 +187,8 @@ class FamilyTreeStore:
             "spouse_id": "TEXT",
             "spouse_ids": "TEXT NOT NULL DEFAULT '[]'",
             "spouse_order": "INTEGER NOT NULL DEFAULT 1",
+            "divorced_spouse_ids": "TEXT NOT NULL DEFAULT '[]'",
+            "step_parent_ids": "TEXT NOT NULL DEFAULT '[]'",
             "sibling_ids": "TEXT NOT NULL DEFAULT '[]'",
             "birth_order": "INTEGER NOT NULL DEFAULT 1",
             "is_adopted": "INTEGER NOT NULL DEFAULT 0",
@@ -351,6 +357,16 @@ class FamilyTreeStore:
                     ensure_ascii=False,
                     separators=(",", ":"),
                 )
+                divorced_spouse_json = json.dumps(
+                    relationships[CONF_DIVORCED_SPOUSE_IDS],
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
+                step_parent_json = json.dumps(
+                    relationships[CONF_STEP_PARENT_IDS],
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
 
                 desired = {
                     "subentry_id": item["subentry_id"],
@@ -371,6 +387,8 @@ class FamilyTreeStore:
                     "spouse_id": relationships[CONF_SPOUSE_ID],
                     "spouse_ids": spouse_json,
                     "spouse_order": relationships[CONF_SPOUSE_ORDER],
+                    "divorced_spouse_ids": divorced_spouse_json,
+                    "step_parent_ids": step_parent_json,
                     "sibling_ids": sibling_json,
                     "birth_order": relationships[CONF_BIRTH_ORDER],
                     "is_adopted": int(relationships[CONF_IS_ADOPTED]),
@@ -398,12 +416,13 @@ class FamilyTreeStore:
                         birth_date, birth_year, birth_month, birth_day,
                         death_date, death_year, death_month, death_day,
                         is_deceased, level, father_id, mother_id, spouse_id,
-                        spouse_ids, spouse_order, sibling_ids, birth_order,
+                        spouse_ids, spouse_order, divorced_spouse_ids,
+                        step_parent_ids, sibling_ids, birth_order,
                         is_adopted, related_person_id, relationship, details,
                         image_path, sort_order, created_at, updated_at
                     ) VALUES (
                         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                     )
                     ON CONFLICT(person_id) DO UPDATE SET
                         subentry_id = excluded.subentry_id,
@@ -424,6 +443,8 @@ class FamilyTreeStore:
                         spouse_id = excluded.spouse_id,
                         spouse_ids = excluded.spouse_ids,
                         spouse_order = excluded.spouse_order,
+                        divorced_spouse_ids = excluded.divorced_spouse_ids,
+                        step_parent_ids = excluded.step_parent_ids,
                         sibling_ids = excluded.sibling_ids,
                         birth_order = excluded.birth_order,
                         is_adopted = excluded.is_adopted,
@@ -454,6 +475,8 @@ class FamilyTreeStore:
                         desired["spouse_id"],
                         desired["spouse_ids"],
                         desired["spouse_order"],
+                        desired["divorced_spouse_ids"],
+                        desired["step_parent_ids"],
                         desired["sibling_ids"],
                         desired["birth_order"],
                         desired["is_adopted"],
@@ -633,6 +656,8 @@ def _normalized_relationship_fields(
     if legacy_spouse_id and legacy_spouse_id not in spouse_ids:
         spouse_ids.insert(0, legacy_spouse_id)
     sibling_ids = _string_list(data.get(CONF_SIBLING_IDS))
+    divorced_spouse_ids = _string_list(data.get(CONF_DIVORCED_SPOUSE_IDS))
+    step_parent_ids = _string_list(data.get(CONF_STEP_PARENT_IDS))
 
     if father_id not in data_by_id or father_id == person_id:
         father_id = None
@@ -644,6 +669,8 @@ def _normalized_relationship_fields(
         if spouse_id in data_by_id and spouse_id != person_id
     ]
     spouse_id = spouse_ids[0] if spouse_ids else None
+    divorced_spouse_ids = [item for item in divorced_spouse_ids if item in spouse_ids]
+    step_parent_ids = [item for item in step_parent_ids if item in data_by_id and item != person_id and item not in (father_id, mother_id)]
     sibling_ids = [
         sibling_id
         for sibling_id in sibling_ids
@@ -678,6 +705,8 @@ def _normalized_relationship_fields(
         CONF_SPOUSE_ID: spouse_id,
         CONF_SPOUSE_IDS: spouse_ids,
         CONF_SPOUSE_ORDER: max(1, int(data.get(CONF_SPOUSE_ORDER, 1) or 1)),
+        CONF_DIVORCED_SPOUSE_IDS: divorced_spouse_ids,
+        CONF_STEP_PARENT_IDS: step_parent_ids,
         CONF_SIBLING_IDS: sibling_ids,
         CONF_BIRTH_ORDER: birth_order,
         CONF_IS_ADOPTED: is_adopted,
@@ -744,6 +773,8 @@ def _row_to_person(row: Mapping[str, Any]) -> dict[str, Any]:
         CONF_SPOUSE_ID: row["spouse_id"],
         CONF_SPOUSE_IDS: _string_list(row["spouse_ids"]),
         CONF_SPOUSE_ORDER: max(1, int(row["spouse_order"] or 1)),
+        CONF_DIVORCED_SPOUSE_IDS: _string_list(row["divorced_spouse_ids"]),
+        CONF_STEP_PARENT_IDS: _string_list(row["step_parent_ids"]),
         CONF_SIBLING_IDS: _string_list(row["sibling_ids"]),
         CONF_BIRTH_ORDER: max(1, int(row["birth_order"] or 1)),
         CONF_IS_ADOPTED: bool(row["is_adopted"]),
