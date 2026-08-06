@@ -14,7 +14,7 @@ DATABASE_SCHEMA_VERSION = 4
 SUBENTRY_TYPE_PERSON = "person"
 
 FRONTEND_STATIC_URL = "/cay_gia_pha_static"
-FRONTEND_MODULE_URL = f"{FRONTEND_STATIC_URL}/cay-gia-pha-card.js?v=0.3.10"
+FRONTEND_MODULE_URL = f"{FRONTEND_STATIC_URL}/cay-gia-pha-card.js?v=0.3.11"
 IMAGE_API_URL = "/api/cay_gia_pha/image/{entry_id}/{person_id}"
 UPLOAD_PREVIEW_API_URL = "/api/cay_gia_pha/upload_preview/{file_id}"
 WS_TYPE_GET_TREE = "cay_gia_pha/get_tree"

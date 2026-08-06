@@ -1,4 +1,4 @@
-const CARD_VERSION = "0.3.10";
+const CARD_VERSION = "0.3.11";
 
 const DEFAULT_CONFIG = {
   title: "Gia Phả Cụ Tiến Tiệp",
@@ -28,14 +28,16 @@ const DEFAULT_CONFIG = {
   show_decorations: true,
   deceased_grayscale: true,
   show_zoom: true,
+  limit_initial_generations: false,
+  initial_generation_limit: 3,
 };
 
 const GENDER_LABEL = { male: "Nam", female: "Nữ", other: "Khác" };
 
 const DEFAULT_AVATAR_URLS = {
-  male: "/cay_gia_pha_static/avatar-male.svg?v=0.3.10",
-  female: "/cay_gia_pha_static/avatar-female.svg?v=0.3.10",
-  other: "/cay_gia_pha_static/avatar-placeholder.svg?v=0.3.10",
+  male: "/cay_gia_pha_static/avatar-male.svg?v=0.3.11",
+  female: "/cay_gia_pha_static/avatar-female.svg?v=0.3.11",
+  other: "/cay_gia_pha_static/avatar-placeholder.svg?v=0.3.11",
 };
 
 const FONT_OPTIONS = [
@@ -65,6 +67,7 @@ class CayGiaPhaCard extends HTMLElement {
     this._needsInitialCenter = true;
     this._pendingViewport = null;
     this._collapsedFamilies = new Set();
+    this._initialGenerationApplied = false;
     this._suppressPersonClickUntil = 0;
     this._wheelZoomFrame = null;
     this._wheelZoomDelta = 0;
@@ -123,6 +126,8 @@ class CayGiaPhaCard extends HTMLElement {
     this._error = null;
     this._zoom = 0.5;
     this._needsInitialCenter = true;
+    this._collapsedFamilies.clear();
+    this._initialGenerationApplied = false;
     this._render();
     this._maybeLoadTree();
   }
@@ -605,6 +610,34 @@ class CayGiaPhaCard extends HTMLElement {
     return families;
   }
 
+  _applyInitialGenerationCollapse(people, maps, families) {
+    if (this._initialGenerationApplied || !people.length) return;
+
+    this._initialGenerationApplied = true;
+    if (!this._config.limit_initial_generations) return;
+
+    const limit = Math.round(clampNumber(this._config.initial_generation_limit, 1, 50, 3));
+    families.forEach((family, key) => {
+      const parentGenerations = family.parentIds
+        .map((id) => maps.byId.get(id))
+        .filter(Boolean)
+        .map((person) => Number(person.level))
+        .filter(Number.isFinite);
+      const childGenerations = family.childIds
+        .map((id) => maps.byId.get(id))
+        .filter(Boolean)
+        .map((person) => Number(person.level))
+        .filter(Number.isFinite);
+
+      if (!parentGenerations.length || !childGenerations.length) return;
+      const parentsAreVisible = Math.max(...parentGenerations) <= limit;
+      const allChildrenAreAfterLimit = Math.min(...childGenerations) > limit;
+      if (parentsAreVisible && allChildrenAreAfterLimit) {
+        this._collapsedFamilies.add(key);
+      }
+    });
+  }
+
   _hiddenDescendantIds(people, maps, families) {
     for (const key of [...this._collapsedFamilies]) {
       if (!families.has(key)) this._collapsedFamilies.delete(key);
@@ -722,6 +755,7 @@ class CayGiaPhaCard extends HTMLElement {
     const completePeople = people;
     const completeMaps = this._relationshipMaps(completePeople);
     const collapseFamilies = this._collapseFamilies(completePeople, completeMaps);
+    this._applyInitialGenerationCollapse(completePeople, completeMaps, collapseFamilies);
     const hiddenIds = this._hiddenDescendantIds(completePeople, completeMaps, collapseFamilies);
     people = completePeople.filter((person) => !hiddenIds.has(person.person_id));
 
@@ -1737,10 +1771,12 @@ class CayGiaPhaCardEditor extends HTMLElement {
         h3 { margin:6px 0 0; font-size:14px; }
         .grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:11px; }
         .full { grid-column:1 / -1; }
-        ha-textfield { width:100%; }
-        .field-block { display:grid; gap:5px; min-width:0; }
+        .field-block { display:grid; gap:6px; min-width:0; }
+        .field-label { color:var(--primary-text-color); font-size:12px; font-weight:500; }
+        .native-field, .select-field select { box-sizing:border-box; width:100%; min-height:48px; padding:0 12px; color:var(--primary-text-color); background:var(--card-background-color); border:1px solid var(--divider-color); border-radius:8px; font:inherit; outline:none; }
+        .native-field:focus, .select-field select:focus { border-color:var(--primary-color); box-shadow:0 0 0 1px var(--primary-color); }
+        .native-field:disabled { opacity:.55; cursor:not-allowed; }
         .select-field { display:grid; gap:6px; font-size:12px; color:var(--secondary-text-color); }
-        .select-field select { width:100%; min-height:48px; padding:0 12px; color:var(--primary-text-color); background:var(--card-background-color); border:1px solid var(--divider-color); border-radius:8px; font:inherit; }
         .hint { margin:0; color:var(--secondary-text-color); font-size:11px; line-height:1.45; }
         .color { display:grid; grid-template-columns:46px 1fr; align-items:center; gap:9px; min-height:44px; }
         .color input { width:42px; height:36px; padding:2px; border:1px solid var(--divider-color); border-radius:8px; background:transparent; }
@@ -1751,7 +1787,7 @@ class CayGiaPhaCardEditor extends HTMLElement {
       <div class="editor">
         <h3>Tiêu đề và phông chữ</h3>
         <div class="grid">
-          ${headingFields.map(([key, label, hint]) => `<div class="field-block full"><ha-textfield class="text-field" data-key="${key}" label="${label}" value="${escapeAttr(c[key] ?? "")}"></ha-textfield><p class="hint">${escapeHtml(hint)}</p></div>`).join("")}
+          ${headingFields.map(([key, label, hint]) => `<label class="field-block full"><span class="field-label">${escapeHtml(label)}</span><input class="native-field text-field" data-key="${key}" type="text" value="${escapeAttr(c[key] ?? "")}" placeholder="${escapeAttr(hint.replace(/^Ví dụ:\s*/, ""))}"><span class="hint">${escapeHtml(hint)}</span></label>`).join("")}
           <label class="select-field">Phông chữ tiêu đề và họ tên
             <select id="title-font">
               ${FONT_OPTIONS.map((font) => `<option value="${font.value}" ${font.value === c.title_font ? "selected" : ""}>${escapeHtml(font.label)}</option>`).join("")}
@@ -1764,10 +1800,11 @@ class CayGiaPhaCardEditor extends HTMLElement {
             </select>
             <span class="hint">Áp dụng cho mô tả, ngày tháng, thống kê, ghi chú và các nội dung phụ.</span>
           </label>
-          <div class="field-block full">
-            <ha-textfield class="text-field" data-key="background_image" label="URL hình nền" value="${escapeAttr(c.background_image ?? "")}"></ha-textfield>
-            <p class="hint">Có thể để trống để dùng nền giấy mặc định của thẻ.</p>
-          </div>
+          <label class="field-block full">
+            <span class="field-label">URL hình nền</span>
+            <input class="native-field text-field" data-key="background_image" type="text" value="${escapeAttr(c.background_image ?? "")}" placeholder="/local/hinh-nen-gia-pha.jpg">
+            <span class="hint">Có thể để trống để dùng nền giấy mặc định của thẻ.</span>
+          </label>
         </div>
         <h3>Màu sắc</h3>
         <div class="grid">
@@ -1775,7 +1812,16 @@ class CayGiaPhaCardEditor extends HTMLElement {
         </div>
         <h3>Kích thước và khoảng cách</h3>
         <div class="grid">
-          ${numberFields.map(([key, label, min, max]) => `<ha-textfield class="number-field" data-key="${key}" type="number" min="${min}" max="${max}" label="${label}" value="${escapeAttr(c[key])}"></ha-textfield>`).join("")}
+          ${numberFields.map(([key, label, min, max]) => `<label class="field-block"><span class="field-label">${escapeHtml(label)}</span><input class="native-field number-field" data-key="${key}" type="number" min="${min}" max="${max}" value="${escapeAttr(c[key])}"></label>`).join("")}
+        </div>
+        <h3>Hiển thị ban đầu</h3>
+        <div class="grid">
+          <label class="switch full"><span>Giới hạn số thế hệ khi mở thẻ</span><ha-switch data-key="limit_initial_generations" ${c.limit_initial_generations ? "checked" : ""}></ha-switch></label>
+          <label class="field-block full">
+            <span class="field-label">Số thế hệ hiển thị ban đầu</span>
+            <input id="initial-generation-limit" class="native-field number-field" data-key="initial_generation_limit" type="number" min="1" max="50" step="1" value="${escapeAttr(clampNumber(c.initial_generation_limit, 1, 50, 3))}" ${c.limit_initial_generations ? "" : "disabled"}>
+            <span class="hint">Ví dụ nhập 3: khi mở thẻ chỉ hiện đến thế hệ thứ 3. Các nhánh đời sau được thu gọn và có thể mở lại bằng nút dấu cộng trên sơ đồ.</span>
+          </label>
         </div>
         <h3>Nội dung</h3>
         <div class="grid">
@@ -1794,13 +1840,26 @@ class CayGiaPhaCardEditor extends HTMLElement {
       field.addEventListener("change", (event) => this._setValue(field.dataset.key, event.target.value));
     });
     this.shadowRoot.querySelectorAll(".number-field").forEach((field) => {
-      field.addEventListener("change", (event) => this._setValue(field.dataset.key, Number(event.target.value)));
+      field.addEventListener("change", (event) => {
+        const minimum = Number(event.target.min);
+        const maximum = Number(event.target.max);
+        const fallback = DEFAULT_CONFIG[field.dataset.key] ?? minimum;
+        const value = Math.round(clampNumber(event.target.value, minimum, maximum, fallback));
+        event.target.value = String(value);
+        this._setValue(field.dataset.key, value);
+      });
     });
     this.shadowRoot.querySelectorAll('input[type="color"]').forEach((field) => {
       field.addEventListener("input", (event) => this._setValue(field.dataset.key, event.target.value));
     });
     this.shadowRoot.querySelectorAll("ha-switch").forEach((field) => {
-      field.addEventListener("change", () => this._setValue(field.dataset.key, field.checked));
+      field.addEventListener("change", () => {
+        this._setValue(field.dataset.key, field.checked);
+        if (field.dataset.key === "limit_initial_generations") {
+          const generationField = this.shadowRoot.querySelector("#initial-generation-limit");
+          if (generationField) generationField.disabled = !field.checked;
+        }
+      });
     });
   }
 
