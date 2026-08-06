@@ -6,7 +6,6 @@
 
 Tích hợp tùy chỉnh giúp lưu trữ, quản lý và hiển thị cây gia phả trực tiếp trong Home Assistant. Dữ liệu được lưu cục bộ, có giao diện thêm/chỉnh sửa từng cá thể và một thẻ Lovelace riêng để xem toàn bộ sơ đồ.
 
-**Phiên bản:** `0.3.10`  
 **Home Assistant tối thiểu:** `2025.3.0`
 
 ## Tính năng
