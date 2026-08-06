@@ -1,0 +1,213 @@
+{
+  "title": "Cây Gia Phả",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Tạo cây gia phả và người gốc",
+        "description": "Khi cơ sở dữ liệu chưa có người, biểu mẫu này tạo luôn cá thể đầu tiên làm gốc Cấp 1. Nếu dữ liệu cũ đã tồn tại, tích hợp tự khôi phục các cá thể từ `/config/cay_gia_pha/`.",
+        "data": {
+          "tree_name": "Tên cây gia phả",
+          "full_name": "Họ và tên người gốc",
+          "gender": "Giới tính",
+          "birth_year": "Năm sinh",
+          "birth_month": "Tháng sinh",
+          "birth_day": "Ngày sinh",
+          "is_deceased": "Đã mất",
+          "death_year": "Năm mất",
+          "death_month": "Tháng mất",
+          "death_day": "Ngày mất",
+          "image_upload": "Ảnh hiển thị",
+          "sort_order": "Thứ tự phụ",
+          "details": "Chi tiết"
+        },
+        "data_description": {
+          "tree_name": "Tên hiển thị của gia phả trong Home Assistant.",
+          "full_name": "Cá thể đầu tiên được tạo ngay khi thêm tích hợp và tự động là gốc Cấp 1.",
+          "birth_year": "Không bắt buộc. Chọn trong danh sách hoặc nhập trực tiếp một năm.",
+          "birth_month": "Không bắt buộc. Có thể nhập hoặc chọn tháng mà không cần biết năm.",
+          "birth_day": "Không bắt buộc. Có thể nhập hoặc chọn ngày mà không cần đủ tháng và năm.",
+          "is_deceased": "Bật khi cá thể đã mất. Không bắt buộc phải biết ngày mất.",
+          "death_year": "Không bắt buộc, kể cả khi đã mất. Có thể chỉ nhập năm mất.",
+          "death_month": "Không bắt buộc. Có thể nhập hoặc chọn riêng tháng mất.",
+          "death_day": "Không bắt buộc. Có thể nhập hoặc chọn riêng ngày mất.",
+          "image_upload": "JPG, PNG, WebP hoặc GIF; tối đa 15 MB. Ảnh được lưu cục bộ trong Home Assistant.",
+          "sort_order": "Tiêu chí phụ khi cần ổn định vị trí hiển thị.",
+          "details": "Tiểu sử, quê quán, ghi chú hoặc thông tin bổ sung.",
+          "gender": "Chọn giới tính để tích hợp lọc đúng danh sách vợ/chồng và xác định vai trò cha hoặc mẹ."
+        }
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "Chỉ hỗ trợ một cây gia phả trên mỗi Home Assistant.",
+      "already_configured": "Cây gia phả đã được cấu hình.",
+      "unsupported_home_assistant_version": "Tích hợp cần Home Assistant 2025.4.0 trở lên vì sử dụng config subentry để quản lý từng cá thể."
+    },
+    "error": {
+      "required": "Trường này là bắt buộc.",
+      "invalid_partial_date": "Ngày, tháng hoặc năm không hợp lệ. Có thể để trống phần chưa biết.",
+      "date_in_future": "Ngày hoặc năm này không thể nằm trong tương lai.",
+      "death_before_birth": "Thông tin đã nhập cho thấy thời điểm mất sớm hơn thời điểm sinh.",
+      "unsupported_image_type": "Định dạng ảnh không được hỗ trợ.",
+      "image_too_large": "Ảnh vượt quá giới hạn 15 MB.",
+      "image_save_failed": "Không thể lưu ảnh vào thư mục dữ liệu."
+    }
+  },
+  "config_subentries": {
+    "person": {
+      "entry_type": "Cá thể",
+      "initiate_flow": {
+        "user": "Thêm cá thể",
+        "reconfigure": "Chỉnh sửa cá thể"
+      },
+      "step": {
+        "user": {
+          "title": "Thêm cá thể · Thông tin cá nhân",
+          "description": "{preview_note}\n\n![Xem trước ảnh đại diện]({preview_url})\n\nNhập thông tin cá nhân và chọn ảnh đại diện. Ảnh mới được xem trước trực tiếp ngay dưới ô chọn ảnh. Nhấn Tiếp theo để kiểm tra lại ảnh và chọn quan hệ gia đình.",
+          "data": {
+            "full_name": "Họ và tên",
+            "gender": "Giới tính",
+            "birth_year": "Năm sinh",
+            "birth_month": "Tháng sinh",
+            "birth_day": "Ngày sinh",
+            "is_deceased": "Đã mất",
+            "death_year": "Năm mất",
+            "death_month": "Tháng mất",
+            "death_day": "Ngày mất",
+            "image_upload": "Ảnh hiển thị",
+            "details": "Chi tiết"
+          },
+          "data_description": {
+            "birth_year": "Không bắt buộc. Chọn nhanh trong danh sách hoặc nhập trực tiếp; chỉ có năm sinh vẫn được lưu.",
+            "birth_month": "Không bắt buộc và không phụ thuộc việc đã nhập năm hay chưa.",
+            "birth_day": "Không bắt buộc và không phụ thuộc việc đã nhập đủ tháng, năm hay chưa.",
+            "is_deceased": "Khi bật, ngày tháng năm mất vẫn có thể để trống hoàn toàn.",
+            "death_year": "Không bắt buộc. Có thể chỉ nhập năm mất để tính tuổi theo năm.",
+            "death_month": "Không bắt buộc. Có thể nhập hoặc chọn riêng tháng mất.",
+            "death_day": "Không bắt buộc. Có thể nhập hoặc chọn riêng ngày mất.",
+            "image_upload": "JPG, PNG, WebP hoặc GIF; tối đa 15 MB. Sau khi chọn, ảnh được xem trước ngay bên dưới ô này.",
+            "details": "Tiểu sử, quê quán, ghi chú hoặc thông tin bổ sung.",
+            "full_name": "Nhập đầy đủ họ và tên sẽ hiển thị trên sơ đồ và tên entity của cá thể.",
+            "gender": "Dùng để hiển thị màu cá thể và lọc danh sách vợ/chồng: nam chỉ chọn nữ, nữ chỉ chọn nam."
+          }
+        },
+        "relationships": {
+          "title": "Thêm cá thể · Quan hệ gia đình",
+          "description": "{preview_note}\n\n![Xem trước ảnh đại diện]({preview_url})\n\nCó thể gõ tên trực tiếp trong các ô Cha, Mẹ, Vợ/Chồng để tìm nhanh. Nam được chọn nhiều vợ; thứ tự danh sách là Vợ cả, Vợ 2, Vợ 3...",
+          "data": {
+            "father_id": "Cha là ai",
+            "mother_id": "Mẹ là ai",
+            "spouse_id": "Chồng là ai",
+            "sibling_ids": "Anh, chị, em ruột là ai",
+            "birth_order": "Là con thứ mấy (1 = lớn nhất)",
+            "is_adopted": "Là con nuôi",
+            "level": "Cấp hiển thị (0 = tự động)",
+            "sort_order": "Thứ tự phụ khi trùng",
+            "spouse_ids": "Danh sách vợ (theo thứ tự)",
+            "spouse_order": "Thứ tự người vợ (1 = Vợ cả)"
+          },
+          "data_description": {
+            "father_id": "Có thể để trống khi chưa rõ thông tin cha. Nhấn vào ô rồi gõ tên để tìm nhanh.",
+            "mother_id": "Có thể để trống khi chưa rõ thông tin mẹ. Nhấn vào ô rồi gõ tên để tìm nhanh.",
+            "spouse_id": "Dành cho người nữ: chọn một người nam làm chồng. Nhấn vào ô rồi gõ tên để tìm nhanh.",
+            "sibling_ids": "Có thể chọn nhiều người và gõ tên để tìm nhanh. Tích hợp cũng tự nhận biết anh chị em có cùng cha mẹ.",
+            "birth_order": "Con thứ 1 nằm ngoài cùng bên trái, sau đó lùi dần đến người nhỏ tuổi hơn; không phân biệt nam nữ.",
+            "is_adopted": "Khi bật, vẫn chọn cha/mẹ như bình thường; thẻ sẽ ghi Con nuôi và dùng đường nối nét đứt.",
+            "level": "Để 0 để tính theo cha mẹ, vợ/chồng hoặc anh chị em.",
+            "sort_order": "Chỉ dùng làm tiêu chí phụ khi thứ tự sinh và ngày sinh giống nhau.",
+            "spouse_ids": "Dành cho người nam: có thể chọn nhiều người nữ và gõ tên để tìm nhanh. Chọn theo thứ tự Vợ cả, Vợ 2, Vợ 3; có thể chỉnh chính xác thứ tự trong hồ sơ từng người vợ.",
+            "spouse_order": "Dành cho người nữ. Nhập 1 cho Vợ cả, 2 cho Vợ 2 và tiếp tục tăng dần. Mỗi người vợ của cùng một chồng phải có thứ tự khác nhau."
+          }
+        },
+        "reconfigure": {
+          "title": "Chỉnh sửa cá thể · Thông tin cá nhân",
+          "description": "{preview_note}\n\n![Xem trước ảnh đại diện]({preview_url})\n\nChọn ảnh mới hoặc để trống để giữ ảnh hiện tại. Nhấn Tiếp theo để sửa quan hệ.",
+          "data": {
+            "full_name": "Họ và tên",
+            "gender": "Giới tính",
+            "birth_year": "Năm sinh",
+            "birth_month": "Tháng sinh",
+            "birth_day": "Ngày sinh",
+            "is_deceased": "Đã mất",
+            "death_year": "Năm mất",
+            "death_month": "Tháng mất",
+            "death_day": "Ngày mất",
+            "image_upload": "Thay ảnh hiển thị",
+            "details": "Chi tiết"
+          },
+          "data_description": {
+            "birth_year": "Không bắt buộc. Chọn nhanh trong danh sách hoặc nhập trực tiếp; chỉ có năm sinh vẫn được lưu.",
+            "birth_month": "Không bắt buộc và không phụ thuộc việc đã nhập năm hay chưa.",
+            "birth_day": "Không bắt buộc và không phụ thuộc việc đã nhập đủ tháng, năm hay chưa.",
+            "is_deceased": "Khi bật, ngày tháng năm mất vẫn có thể để trống hoàn toàn.",
+            "death_year": "Không bắt buộc. Có thể chỉ nhập năm mất để tính tuổi theo năm.",
+            "death_month": "Không bắt buộc. Có thể nhập hoặc chọn riêng tháng mất.",
+            "death_day": "Không bắt buộc. Có thể nhập hoặc chọn riêng ngày mất.",
+            "image_upload": "Để trống để giữ ảnh hiện tại. Khi chọn ảnh mới, ảnh được xem trước ngay bên dưới ô này.",
+            "details": "Tiểu sử, quê quán, ghi chú hoặc thông tin bổ sung.",
+            "full_name": "Tên mới sẽ cập nhật trên sơ đồ, entity và tên thư mục ảnh của cá thể.",
+            "gender": "Thay đổi giới tính sẽ cập nhật màu hiển thị và danh sách vợ/chồng hợp lệ ở bước tiếp theo."
+          }
+        },
+        "reconfigure_relationships": {
+          "title": "Chỉnh sửa cá thể · Quan hệ gia đình",
+          "description": "{preview_note}\n\n![Xem trước ảnh đại diện]({preview_url})\n\nKiểm tra ảnh và cập nhật quan hệ gia đình. Có thể gõ tên để tìm nhanh; danh sách nhiều vợ có thể kéo thả để đổi thứ tự.",
+          "data": {
+            "father_id": "Cha là ai",
+            "mother_id": "Mẹ là ai",
+            "spouse_id": "Chồng là ai",
+            "sibling_ids": "Anh, chị, em ruột là ai",
+            "birth_order": "Là con thứ mấy (1 = lớn nhất)",
+            "is_adopted": "Là con nuôi",
+            "level": "Cấp hiển thị (0 = tự động)",
+            "sort_order": "Thứ tự phụ khi trùng",
+            "spouse_ids": "Danh sách vợ (theo thứ tự)",
+            "spouse_order": "Thứ tự người vợ (1 = Vợ cả)"
+          },
+          "data_description": {
+            "father_id": "Có thể để trống khi chưa rõ thông tin cha. Nhấn vào ô rồi gõ tên để tìm nhanh.",
+            "mother_id": "Có thể để trống khi chưa rõ thông tin mẹ. Nhấn vào ô rồi gõ tên để tìm nhanh.",
+            "spouse_id": "Dành cho người nữ: chọn một người nam làm chồng. Nhấn vào ô rồi gõ tên để tìm nhanh.",
+            "sibling_ids": "Có thể chọn nhiều người và gõ tên để tìm nhanh. Tích hợp cũng tự nhận biết anh chị em có cùng cha mẹ.",
+            "birth_order": "Con thứ 1 nằm ngoài cùng bên trái, sau đó lùi dần đến người nhỏ tuổi hơn; không phân biệt nam nữ.",
+            "is_adopted": "Khi bật, vẫn chọn cha/mẹ như bình thường; thẻ sẽ ghi Con nuôi và dùng đường nối nét đứt.",
+            "level": "Để 0 để tính theo cha mẹ, vợ/chồng hoặc anh chị em.",
+            "sort_order": "Chỉ dùng làm tiêu chí phụ khi thứ tự sinh và ngày sinh giống nhau.",
+            "spouse_ids": "Dành cho người nam: có thể chọn nhiều người nữ và gõ tên để tìm nhanh. Chọn theo thứ tự Vợ cả, Vợ 2, Vợ 3; có thể chỉnh chính xác thứ tự trong hồ sơ từng người vợ.",
+            "spouse_order": "Dành cho người nữ. Nhập 1 cho Vợ cả, 2 cho Vợ 2 và tiếp tục tăng dần. Mỗi người vợ của cùng một chồng phải có thứ tự khác nhau."
+          }
+        }
+      },
+      "error": {
+        "required": "Trường này là bắt buộc.",
+        "invalid_partial_date": "Ngày, tháng hoặc năm không hợp lệ. Có thể để trống phần chưa biết.",
+        "date_in_future": "Ngày hoặc năm này không thể nằm trong tương lai.",
+        "death_before_birth": "Thông tin đã nhập cho thấy thời điểm mất sớm hơn thời điểm sinh.",
+        "family_link_required": "Hãy chọn ít nhất một quan hệ: cha, mẹ, vợ/chồng hoặc anh chị em.",
+        "person_not_found": "Một cá thể đã chọn không còn tồn tại. Hãy mở lại biểu mẫu.",
+        "parents_must_differ": "Cha và mẹ phải là hai cá thể khác nhau.",
+        "relationship_conflict": "Một cá thể không thể đồng thời giữ các vai trò quan hệ xung đột.",
+        "relationship_cycle": "Quan hệ cha mẹ này tạo vòng lặp trong cây gia phả.",
+        "adopted_parent_required": "Con nuôi phải chọn ít nhất cha hoặc mẹ.",
+        "birth_order_duplicate": "Số thứ tự sinh này đã được dùng trong cùng gia đình. Hãy chọn số khác.",
+        "unsupported_image_type": "Định dạng ảnh không được hỗ trợ.",
+        "image_too_large": "Ảnh vượt quá giới hạn 15 MB.",
+        "image_save_failed": "Không thể lưu ảnh vào thư mục dữ liệu.",
+        "spouse_gender_mismatch": "Vợ/chồng phải có giới tính đối ứng: nam chọn nữ, nữ chọn nam.",
+        "only_one_father": "Chỉ được chọn một người cha.",
+        "only_one_mother": "Chỉ được chọn một người mẹ.",
+        "only_one_husband": "Mỗi người nữ chỉ chọn một người chồng trong trường này.",
+        "spouse_order_duplicate": "Người chồng này đã có một người vợ ở cùng thứ tự. Hãy chọn số thứ tự khác."
+      },
+      "abort": {
+        "reconfigure_successful": "Đã cập nhật cá thể."
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "summary": {
+        "name": "Tổng quan"
+      }
+    }
+  }
+}

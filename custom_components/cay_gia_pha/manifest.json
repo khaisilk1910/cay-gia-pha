@@ -1,0 +1,20 @@
+{
+  "domain": "cay_gia_pha",
+  "name": "Cây Gia Phả",
+  "codeowners": [
+    "@khaisilk1910"
+  ],
+  "config_flow": true,
+  "dependencies": [
+    "file_upload",
+    "frontend",
+    "http",
+    "websocket_api"
+  ],
+  "documentation": "https://github.com/khaisilk1910/cay-gia-pha",
+  "integration_type": "service",
+  "iot_class": "local_push",
+  "issue_tracker": "https://github.com/khaisilk1910/cay-gia-pha/issues",
+  "requirements": [],
+  "version": "0.3.10"
+}

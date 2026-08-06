@@ -1,0 +1,213 @@
+{
+  "title": "Family Tree",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Create a family tree and root person",
+        "description": "When the database is empty, this form also creates the first person as the Level 1 root. Existing people are restored automatically from `/config/cay_gia_pha/`.",
+        "data": {
+          "tree_name": "Family tree name",
+          "full_name": "Root person full name",
+          "gender": "Gender",
+          "birth_year": "Birth year",
+          "birth_month": "Birth month",
+          "birth_day": "Birth day",
+          "is_deceased": "Deceased",
+          "death_year": "Death year",
+          "death_month": "Death month",
+          "death_day": "Death day",
+          "image_upload": "Display image",
+          "sort_order": "Tie-break order",
+          "details": "Details"
+        },
+        "data_description": {
+          "tree_name": "The name shown for this family tree in Home Assistant.",
+          "full_name": "The first person is created during integration setup and becomes the Level 1 root.",
+          "birth_year": "Optional. Select from the list or type a year directly.",
+          "birth_month": "Optional. A month can be stored without a known year.",
+          "birth_day": "Optional. A day can be stored without a complete month and year.",
+          "is_deceased": "Enable for a deceased person. A death date is not required.",
+          "death_year": "Optional even when deceased. A year alone can be stored.",
+          "death_month": "Optional. Select or type the death month independently.",
+          "death_day": "Optional. Select or type the death day independently.",
+          "image_upload": "JPG, PNG, WebP, or GIF; maximum 15 MB. The image is stored locally in Home Assistant.",
+          "sort_order": "A secondary value used to keep layout order stable.",
+          "details": "Biography, hometown, notes, or other information.",
+          "gender": "Select a gender so the integration can filter spouse choices and determine father or mother roles correctly."
+        }
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "Only one family tree is supported per Home Assistant instance.",
+      "already_configured": "The family tree is already configured.",
+      "unsupported_home_assistant_version": "This integration requires Home Assistant 2025.4.0 or newer because it uses config subentries."
+    },
+    "error": {
+      "required": "This field is required.",
+      "invalid_partial_date": "The entered year, month, or day is invalid. Unknown parts may be left empty.",
+      "date_in_future": "This date or year cannot be in the future.",
+      "death_before_birth": "The known death information is earlier than the known birth information.",
+      "unsupported_image_type": "This image format is not supported.",
+      "image_too_large": "The image exceeds the 15 MB limit.",
+      "image_save_failed": "The image could not be saved to the data directory."
+    }
+  },
+  "config_subentries": {
+    "person": {
+      "entry_type": "Person",
+      "initiate_flow": {
+        "user": "Add person",
+        "reconfigure": "Edit person"
+      },
+      "step": {
+        "user": {
+          "title": "Add person · Personal information",
+          "description": "{preview_note}\n\n![Portrait preview]({preview_url})\n\nEnter personal information and choose a portrait. A newly selected image is previewed directly below the file field. Continue to review the image and select family relationships.",
+          "data": {
+            "full_name": "Full name",
+            "gender": "Gender",
+            "birth_year": "Birth year",
+            "birth_month": "Birth month",
+            "birth_day": "Birth day",
+            "is_deceased": "Deceased",
+            "death_year": "Death year",
+            "death_month": "Death month",
+            "death_day": "Death day",
+            "image_upload": "Display image",
+            "details": "Details"
+          },
+          "data_description": {
+            "birth_year": "Optional. Select quickly or type a custom year; year-only dates are supported.",
+            "birth_month": "Optional and may be stored without a year.",
+            "birth_day": "Optional and may be stored without a complete month and year.",
+            "is_deceased": "A death year, month, and day may all remain empty.",
+            "death_year": "Optional. A death year alone is enough for year-based age calculation.",
+            "death_month": "Optional and may be selected or typed independently.",
+            "death_day": "Optional and may be selected or typed independently.",
+            "image_upload": "JPG, PNG, WebP, or GIF; maximum 15 MB. The selected image is previewed directly below this field.",
+            "details": "Biography, hometown, notes, or other information.",
+            "full_name": "Enter the full name shown on the family tree and used for the person entity name.",
+            "gender": "Used for person colors and spouse filtering: male can select only female and female can select only male."
+          }
+        },
+        "relationships": {
+          "title": "Add person · Family relationships",
+          "description": "{preview_note}\n\n![Portrait preview]({preview_url})\n\nType a name in the Father, Mother, or Spouse fields to search quickly. A male person may select multiple wives; their list order is First wife, Wife 2, Wife 3...",
+          "data": {
+            "father_id": "Father",
+            "mother_id": "Mother",
+            "spouse_id": "Husband",
+            "sibling_ids": "Biological siblings",
+            "birth_order": "Birth order (1 = oldest)",
+            "is_adopted": "Adopted child",
+            "level": "Display level (0 = automatic)",
+            "sort_order": "Tie-break order",
+            "spouse_ids": "Wives in order",
+            "spouse_order": "Wife order (1 = first wife)"
+          },
+          "data_description": {
+            "father_id": "May be left empty when the father is unknown. Open the field and type a name to search.",
+            "mother_id": "May be left empty when the mother is unknown. Open the field and type a name to search.",
+            "spouse_id": "For a female person: select one male husband. Open the field and type a name to search.",
+            "sibling_ids": "Select multiple people and type to search. The integration also detects siblings sharing the same parents.",
+            "birth_order": "Birth order 1 is placed furthest left, followed by younger siblings, regardless of gender.",
+            "is_adopted": "Select parents normally; the card adds an Adopted label and a dashed parent line.",
+            "level": "Leave at 0 to calculate from parents, spouse, or siblings.",
+            "sort_order": "Used only when birth order and birth date are the same.",
+            "spouse_ids": "For a male person: select multiple female wives and type a name to search. Select them in First wife, Wife 2, Wife 3 order; the exact position can also be set in each wife profile.",
+            "spouse_order": "For a female person. Use 1 for the first wife, 2 for Wife 2, and so on. Wives of the same husband must use different positions."
+          }
+        },
+        "reconfigure": {
+          "title": "Edit person · Personal information",
+          "description": "{preview_note}\n\n![Portrait preview]({preview_url})\n\nChoose a new image or leave it empty to keep the current image. Continue to edit relationships.",
+          "data": {
+            "full_name": "Full name",
+            "gender": "Gender",
+            "birth_year": "Birth year",
+            "birth_month": "Birth month",
+            "birth_day": "Birth day",
+            "is_deceased": "Deceased",
+            "death_year": "Death year",
+            "death_month": "Death month",
+            "death_day": "Death day",
+            "image_upload": "Replace display image",
+            "details": "Details"
+          },
+          "data_description": {
+            "birth_year": "Optional. Select quickly or type a custom year; year-only dates are supported.",
+            "birth_month": "Optional and may be stored without a year.",
+            "birth_day": "Optional and may be stored without a complete month and year.",
+            "is_deceased": "A death year, month, and day may all remain empty.",
+            "death_year": "Optional. A death year alone is enough for year-based age calculation.",
+            "death_month": "Optional and may be selected or typed independently.",
+            "death_day": "Optional and may be selected or typed independently.",
+            "image_upload": "Leave empty to keep the current image. A newly selected image is previewed directly below this field.",
+            "details": "Biography, hometown, notes, or other information.",
+            "full_name": "The updated name is used on the tree, the entity, and the portrait folder name.",
+            "gender": "Changing gender updates the display color and valid spouse choices in the next step."
+          }
+        },
+        "reconfigure_relationships": {
+          "title": "Edit person · Family relationships",
+          "description": "{preview_note}\n\n![Portrait preview]({preview_url})\n\nReview the portrait and update family relationships. Type names to search; a multiple-wife list can be reordered by dragging selected items.",
+          "data": {
+            "father_id": "Father",
+            "mother_id": "Mother",
+            "spouse_id": "Husband",
+            "sibling_ids": "Biological siblings",
+            "birth_order": "Birth order (1 = oldest)",
+            "is_adopted": "Adopted child",
+            "level": "Display level (0 = automatic)",
+            "sort_order": "Tie-break order",
+            "spouse_ids": "Wives in order",
+            "spouse_order": "Wife order (1 = first wife)"
+          },
+          "data_description": {
+            "father_id": "May be left empty when the father is unknown. Open the field and type a name to search.",
+            "mother_id": "May be left empty when the mother is unknown. Open the field and type a name to search.",
+            "spouse_id": "For a female person: select one male husband. Open the field and type a name to search.",
+            "sibling_ids": "Select multiple people and type to search. The integration also detects siblings sharing the same parents.",
+            "birth_order": "Birth order 1 is placed furthest left, followed by younger siblings, regardless of gender.",
+            "is_adopted": "Select parents normally; the card adds an Adopted label and a dashed parent line.",
+            "level": "Leave at 0 to calculate from parents, spouse, or siblings.",
+            "sort_order": "Used only when birth order and birth date are the same.",
+            "spouse_ids": "For a male person: select multiple female wives and type a name to search. Select them in First wife, Wife 2, Wife 3 order; the exact position can also be set in each wife profile.",
+            "spouse_order": "For a female person. Use 1 for the first wife, 2 for Wife 2, and so on. Wives of the same husband must use different positions."
+          }
+        }
+      },
+      "error": {
+        "required": "This field is required.",
+        "invalid_partial_date": "The entered year, month, or day is invalid. Unknown parts may be left empty.",
+        "date_in_future": "This date or year cannot be in the future.",
+        "death_before_birth": "The known death information is earlier than the known birth information.",
+        "family_link_required": "Select at least one family link: father, mother, spouse, or sibling.",
+        "person_not_found": "A selected person no longer exists. Reopen the form.",
+        "parents_must_differ": "Father and mother must be different people.",
+        "relationship_conflict": "The same person cannot have conflicting relationship roles.",
+        "relationship_cycle": "This parent relationship would create a cycle in the family tree.",
+        "adopted_parent_required": "An adopted child must have at least one selected parent.",
+        "birth_order_duplicate": "This birth order is already used in the same family.",
+        "unsupported_image_type": "This image format is not supported.",
+        "image_too_large": "The image exceeds the 15 MB limit.",
+        "image_save_failed": "The image could not be saved to the data directory.",
+        "spouse_gender_mismatch": "The spouse gender must be opposite: male selects female and female selects male.",
+        "only_one_father": "Select only one father.",
+        "only_one_mother": "Select only one mother.",
+        "only_one_husband": "A female person can select only one husband in this field.",
+        "spouse_order_duplicate": "This husband already has another wife at the same position. Choose a different order number."
+      },
+      "abort": {
+        "reconfigure_successful": "The person was updated."
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "summary": {
+        "name": "Summary"
+      }
+    }
+  }
+}
