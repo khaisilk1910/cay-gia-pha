@@ -76,43 +76,7 @@ Sau đó khởi động lại Home Assistant và thêm tích hợp từ **Settin
 
 Tích hợp tự đăng ký tệp JavaScript của thẻ, vì vậy không cần thêm Lovelace Resource thủ công.
 
-Trong Dashboard, chọn **Add card** và tìm **Cây Gia Phả**. Có thể dùng YAML tối giản:
-
-```yaml
-type: custom:cay-gia-pha-card
-title: Gia Phả Gia Đình
-subtitle: Theo dấu các thế hệ trong gia đình qua năm tháng.
-show_summary: true
-show_dates: true
-show_age: false
-show_details: true
-show_decorations: true
-deceased_grayscale: true
-show_zoom: true
-```
-
-Một số tùy chọn giao diện khác:
-
-```yaml
-title_font: noto-serif
-content_font: noto-sans
-title_font_size: 46
-subtitle_font_size: 14
-avatar_size: 70
-node_width: 156
-horizontal_spacing: 34
-vertical_spacing: 84
-border_radius: 18
-background_color: "#fbfaf6"
-text_color: "#171512"
-muted_text_color: "#655f55"
-line_color: "#aaa493"
-border_color: "#d9d3c5"
-male_color: "#557d96"
-female_color: "#a97887"
-other_color: "#7d7294"
-decoration_color: "#d8d2c1"
-```
+Trong Dashboard, chọn **Add card** và tìm **Cây Gia Phả**.
 
 ## Dữ liệu và quyền riêng tư
 
@@ -121,18 +85,10 @@ decoration_color: "#d8d2c1"
 - Hãy sao lưu cấu hình Home Assistant trước khi nâng cấp hoặc chỉnh sửa dữ liệu lớn.
 - Không nên đưa ảnh, ngày sinh hoặc thông tin gia đình thật vào issue công khai trên GitHub.
 
-## Cập nhật phiên bản
-
-Khi phát hành phiên bản mới, cần cập nhật đồng thời:
-
-- `version` trong `custom_components/cay_gia_pha/manifest.json`.
-- `FRONTEND_MODULE_URL` trong `const.py`.
-- `CARD_VERSION` và phiên bản URL ảnh mặc định trong `frontend/cay-gia-pha-card.js`.
-- `CHANGELOG.md`.
 
 ## Báo lỗi và đóng góp
 
-Trước khi tạo issue, hãy kiểm tra log Home Assistant và xóa thông tin cá nhân khỏi ảnh chụp màn hình. Xem thêm [CONTRIBUTING.md](CONTRIBUTING.md) và [SECURITY.md](SECURITY.md).
+Trước khi tạo issue, hãy kiểm tra log Home Assistant và xóa thông tin cá nhân khỏi ảnh chụp màn hình.
 
 ## Giấy phép
 
