@@ -3,16 +3,83 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
+import os
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.loader import async_get_integration
 
-from .const import DOMAIN, PLATFORMS, RUNTIME_SETUP_DONE
+from .const import (
+    DOMAIN,
+    FRONTEND_CARD_FILENAME,
+    FRONTEND_MODULE_URL,
+    PLATFORMS,
+    RUNTIME_SETUP_DONE,
+)
 
 if TYPE_CHECKING:
     from .coordinator import FamilyTreeCoordinator
     from .storage import FamilyTreeStore
+
+
+async def _async_register_lovelace_resource(
+    hass: HomeAssistant, url: str, version: str
+) -> bool:
+    """Register or update one Lovelace module with deterministic cache busting.
+
+    This follows the same strategy used by Shopping History: prefer Lovelace's
+    resource storage, update an existing URL in place, and only fall back to
+    ``add_extra_js_url`` when resource storage is unavailable. Registering by one
+    route avoids loading the same custom element twice.
+    """
+    from homeassistant.components.frontend import add_extra_js_url
+
+    versioned_url = f"{url}?v={version}"
+    lovelace = hass.data.get("lovelace")
+    if not lovelace:
+        add_extra_js_url(hass, versioned_url)
+        return False
+
+    resources = getattr(lovelace, "resources", None)
+    if resources is None and hasattr(lovelace, "get"):
+        resources = lovelace.get("resources")
+
+    if not resources or not hasattr(resources, "async_items"):
+        add_extra_js_url(hass, versioned_url)
+        return False
+
+    if hasattr(resources, "async_get_info"):
+        await resources.async_get_info()
+    elif hasattr(resources, "async_load") and not getattr(resources, "loaded", True):
+        await resources.async_load()
+
+    for item in resources.async_items():
+        item_url = item.get("url", "")
+        if item_url.split("?", 1)[0] != url:
+            continue
+        if item_url != versioned_url:
+            await resources.async_update_item(
+                item["id"], {"res_type": "module", "url": versioned_url}
+            )
+        return True
+
+    await resources.async_create_item(
+        {"res_type": "module", "url": versioned_url}
+    )
+    return True
+
+
+def _frontend_file_version(file_path: str, fallback: str) -> str:
+    """Build a cache key from integration version and actual JS file content."""
+    try:
+        stat = os.stat(file_path)
+        with open(file_path, "rb") as file_obj:
+            digest = hashlib.sha256(file_obj.read()).hexdigest()[:12]
+        return f"{fallback}-{int(stat.st_mtime)}-{stat.st_size}-{digest}"
+    except OSError:
+        return fallback
 
 
 @dataclass(slots=True)
@@ -33,10 +100,9 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
     """
     from pathlib import Path
 
-    from homeassistant.components import frontend
     from homeassistant.components.http import StaticPathConfig
 
-    from .const import FRONTEND_MODULE_URL, FRONTEND_STATIC_URL
+    from .const import FRONTEND_STATIC_URL
     from .http import FamilyTreeImageView, FamilyTreeUploadPreviewView
     from .websocket_api import async_register_websocket_commands
 
@@ -54,7 +120,6 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
             )
         ]
     )
-    frontend.add_extra_js_url(hass, FRONTEND_MODULE_URL)
     hass.http.register_view(FamilyTreeImageView())
     hass.http.register_view(FamilyTreeUploadPreviewView())
     async_register_websocket_commands(hass)
@@ -66,6 +131,18 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry[FamilyTreeRuntimeData]
 ) -> bool:
     """Set up Cây Gia Phả from a config entry."""
+    integration = await async_get_integration(hass, DOMAIN)
+    fallback_version = integration.version if integration.version else "0"
+    frontend_file = hass.config.path(
+        "custom_components", DOMAIN, "frontend", FRONTEND_CARD_FILENAME
+    )
+    frontend_version = await hass.async_add_executor_job(
+        _frontend_file_version, frontend_file, fallback_version
+    )
+    await _async_register_lovelace_resource(
+        hass, FRONTEND_MODULE_URL, frontend_version
+    )
+
     from .coordinator import FamilyTreeCoordinator
     from .image_utils import async_delete_images
     from .storage import FamilyTreeStore
