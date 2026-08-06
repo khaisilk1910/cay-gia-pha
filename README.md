@@ -37,8 +37,6 @@ Tích hợp tùy chỉnh giúp lưu trữ, quản lý và hiển thị cây gia 
   - Sau khi thêm trong HACS và khởi động lại Home Assistant
      
   - Vào Settings -> Integrations -> Add integration -> Tìm `Cây Gia Phả`
-    
----
 
 ## Cài đặt bằng HACS
 
@@ -63,6 +61,9 @@ vào thư mục cấu hình Home Assistant:
 ```
 
 Sau đó khởi động lại Home Assistant và thêm tích hợp từ **Settings → Devices & services**.
+
+---
+
 
 ## Thiết lập cây gia phả
 
