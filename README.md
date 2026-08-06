@@ -20,6 +20,7 @@ Tích hợp tùy chỉnh giúp lưu trữ, quản lý và hiển thị cây gia 
 - Bố cục nhiều vợ/chồng và các nhánh con được tính toán độc lập để hạn chế chồng chéo.
 - Tùy chỉnh tiêu đề, nội dung, phông chữ, màu sắc, kích thước ảnh và khoảng cách sơ đồ.
 - Có bản dịch tiếng Việt và tiếng Anh.
+- Dữ liệu sẽ được tạo folder tự động trong Home assistant trong `/home-assistant/config/cay_gia_pha/`. Bạn nên backup Home assistant hoặc copy folder này để lưu sau khi hoàn thành việc nhập dữ liệu để sau này cần có thể cài tích hợp và copy lại folder này sẽ lấy lại được dữ liệu đã nhập.
 
 
 
