@@ -1,4 +1,4 @@
-const CARD_VERSION = "0.3.13";
+const CARD_VERSION = "0.3.14";
 
 const TREE_CACHE_MAX_AGE = 6 * 24 * 60 * 60 * 1000;
 const FAMILY_TREE_CACHE = new Map();
@@ -40,9 +40,9 @@ const DEFAULT_CONFIG = {
 const GENDER_LABEL = { male: "Nam", female: "Nữ", other: "Khác" };
 
 const DEFAULT_AVATAR_URLS = {
-  male: "/cay_gia_pha_static/avatar-male.svg?v=0.3.13",
-  female: "/cay_gia_pha_static/avatar-female.svg?v=0.3.13",
-  other: "/cay_gia_pha_static/avatar-placeholder.svg?v=0.3.13",
+  male: "/cay_gia_pha_static/avatar-male.svg?v=0.3.14",
+  female: "/cay_gia_pha_static/avatar-female.svg?v=0.3.14",
+  other: "/cay_gia_pha_static/avatar-placeholder.svg?v=0.3.14",
 };
 
 const FONT_OPTIONS = [
@@ -691,6 +691,8 @@ class CayGiaPhaCard extends HTMLElement {
       spouse_id: person.spouse_id ? String(person.spouse_id) : null,
       spouse_ids: uniqueStrings(person.spouse_ids || person.spouse_id),
       spouse_order: Math.max(1, Number(person.spouse_order) || 1),
+      divorced_spouse_ids: uniqueStrings(person.divorced_spouse_ids),
+      step_parent_ids: uniqueStrings(person.step_parent_ids),
       sibling_ids: uniqueStrings(person.sibling_ids),
       is_adopted: Boolean(person.is_adopted),
       is_deceased: Boolean(person.is_deceased),
@@ -728,6 +730,8 @@ class CayGiaPhaCard extends HTMLElement {
       person.spouse_ids = uniqueStrings([...(person.spouse_ids || []), person.spouse_id])
         .filter((id) => id !== person.person_id && byId.has(id));
       person.spouse_id = person.spouse_ids[0] || null;
+      person.divorced_spouse_ids = uniqueStrings(person.divorced_spouse_ids).filter((id) => person.spouse_ids.includes(id));
+      person.step_parent_ids = uniqueStrings(person.step_parent_ids).filter((id) => id !== person.person_id && byId.has(id) && id !== person.father_id && id !== person.mother_id);
       person._display_spouse_order = person.gender === "female" ? person.spouse_order : null;
     });
     const spouseSets = new Map(normalized.map((person) => [person.person_id, new Set()]));
@@ -736,6 +740,14 @@ class CayGiaPhaCard extends HTMLElement {
         if (!byId.has(spouseId) || spouseId === person.person_id) return;
         spouseSets.get(person.person_id).add(spouseId);
         spouseSets.get(spouseId).add(person.person_id);
+      });
+    });
+    normalized.forEach((person) => {
+      person.divorced_spouse_ids.forEach((spouseId) => {
+        const spouse = byId.get(spouseId);
+        if (spouse && !spouse.divorced_spouse_ids.includes(person.person_id)) {
+          spouse.divorced_spouse_ids.push(person.person_id);
+        }
       });
     });
 
@@ -767,19 +779,14 @@ class CayGiaPhaCard extends HTMLElement {
   }
 
   _parentIdsForChild(child, maps) {
-    let parentIds = uniqueStrings([child.father_id, child.mother_id])
+    return uniqueStrings([child.father_id, child.mother_id, ...(child.step_parent_ids || [])])
       .filter((id) => maps.byId.has(id));
-    if (parentIds.length === 1) {
-      const parent = maps.byId.get(parentIds[0]);
-      const spouseCandidates = [...(maps.spouses.get(parentIds[0]) || [])]
-        .map((id) => maps.byId.get(id))
-        .filter(Boolean)
-        .filter((candidate) => candidate.level === parent?.level);
-      if (spouseCandidates.length === 1) {
-        parentIds = uniqueStrings([...parentIds, spouseCandidates[0].person_id]);
-      }
-    }
-    return parentIds;
+  }
+
+  _isDivorcedPair(firstId, secondId, maps) {
+    const first = maps.byId.get(firstId);
+    const second = maps.byId.get(secondId);
+    return Boolean(first?.divorced_spouse_ids?.includes(secondId) || second?.divorced_spouse_ids?.includes(firstId));
   }
 
   _collapseFamilies(people, maps) {
@@ -1343,7 +1350,8 @@ class CayGiaPhaCard extends HTMLElement {
             lineEnd = rightNeighbor.x;
           }
         }
-        paths.push(`<path class="relation relation-spouse" d="M ${round(lineStart)} ${round(y)} H ${round(lineEnd)}" />`);
+        const divorceClass = this._isDivorcedPair(personId, spouseId, maps) ? " relation-divorced" : "";
+        paths.push(`<path class="relation relation-spouse${divorceClass}" d="M ${round(lineStart)} ${round(y)} H ${round(lineEnd)}" />`);
         drawnCouples.add(key);
       });
     });
@@ -1414,7 +1422,8 @@ class CayGiaPhaCard extends HTMLElement {
       }
       orderedChildren.forEach((child) => {
         const childX = child.x + child.nodeWidth / 2;
-        const relationClass = child.is_adopted ? "relation-adopted" : "relation-child";
+        const isStepChild = (child.step_parent_ids || []).length > 0;
+        const relationClass = child.is_adopted ? "relation-adopted" : (isStepChild ? "relation-stepchild" : "relation-child");
         paths.push(`<path class="relation ${relationClass}" d="M ${round(childX)} ${round(barY)} V ${round(child.y)}" />`);
       });
     });
@@ -1494,7 +1503,7 @@ class CayGiaPhaCard extends HTMLElement {
         </div>
         <div class="avatar-wrap">
           ${image}
-          ${person.is_adopted ? '<span class="adopted-mark" title="Con nuôi">N</span>' : ""}
+          ${person.is_adopted ? '<span class="adopted-mark" title="Con nuôi">N</span>' : ((person.step_parent_ids || []).length ? '<span class="stepchild-mark" title="Con riêng của vợ/chồng">R</span>' : "")}
           ${person.is_deceased ? '<span class="memorial" title="Đã mất" aria-label="Đã mất"><ha-icon icon="mdi:candle"></ha-icon></span>' : ""}
         </div>
       </article>
@@ -1522,6 +1531,7 @@ class CayGiaPhaCard extends HTMLElement {
     const hasSpouse = (person.spouse_ids || []).length > 0 || Boolean(person.spouse_id);
     const order = Number(person.birth_order) > 0 ? `Con thứ ${Number(person.birth_order)}` : "";
     if (person.is_adopted) return ["Con nuôi", order].filter(Boolean).join(" · ");
+    if ((person.step_parent_ids || []).length) return ["Con riêng", order].filter(Boolean).join(" · ");
     if (hasParents) return order || `Thế hệ ${person.level}`;
     if (hasSpouse) {
       if (person.gender === "male") return person.level === 1 ? "Gốc gia phả" : "Chồng";
@@ -1553,6 +1563,7 @@ class CayGiaPhaCard extends HTMLElement {
     const maps = providedMaps || this._relationshipMaps(people);
     const father = person.father_id ? maps.byId.get(person.father_id) : null;
     const mother = person.mother_id ? maps.byId.get(person.mother_id) : null;
+    const stepParents = (person.step_parent_ids || []).map((id) => maps.byId.get(id)).filter(Boolean);
     const spouseItems = [...(maps.spouses.get(person.person_id) || [])]
       .map((id) => ({
         spouse: maps.byId.get(id),
@@ -1565,13 +1576,17 @@ class CayGiaPhaCard extends HTMLElement {
       : 0;
     const spouseNames = spouseItems
       .map((item) => {
+        const divorced = this._isDivorcedPair(person.person_id, item.spouse.person_id, maps);
+        let label = item.spouse.full_name;
         if (person.gender === "male" && item.spouse.gender === "female") {
           const rank = Number.isFinite(item.rank) ? item.rank : item.spouse.spouse_order;
-          return `${wifeRankLabel(rank, wifeCount)}: ${item.spouse.full_name}`;
+          label = `${wifeRankLabel(rank, wifeCount)}: ${item.spouse.full_name}`;
         }
-        return item.spouse.full_name;
+        return { label: `${label}${divorced ? " (đã ly hôn)" : ""}`, divorced };
       })
-      .join(", ");
+      .sort((a, b) => Number(a.divorced) - Number(b.divorced))
+      .map((item) => item.label)
+      .join("\n");
     const siblingNames = [...(maps.siblings.get(person.person_id) || [])]
       .map((id) => maps.byId.get(id))
       .filter(Boolean)
@@ -1586,9 +1601,10 @@ class CayGiaPhaCard extends HTMLElement {
       ["Giới tính", GENDER_LABEL[person.gender] || "Khác"],
       ["Thế hệ", person.level],
       ["Con thứ", Number(person.birth_order) > 0 ? Number(person.birth_order) : "—"],
-      ["Quan hệ cha mẹ", person.is_adopted ? "Con nuôi" : (father || mother ? "Con ruột" : "—")],
+      ["Quan hệ cha mẹ", person.is_adopted ? "Con nuôi" : ((person.step_parent_ids || []).length ? "Con riêng của vợ/chồng" : (father && mother ? "Con đẻ chung" : (father || mother ? "Con ruột (chưa đủ thông tin cha/mẹ)" : "—")))],
       ["Cha", father?.full_name || "—"],
       ["Mẹ", mother?.full_name || "—"],
+      ["Cha/mẹ kế", stepParents.map((item) => item.full_name).join(", ") || "—"],
       ["Vợ / chồng", spouseNames || "—"],
       ["Anh chị em ruột", siblingNames || "—"],
       ["Ngày sinh", formatPersonDate(person, "birth") || "Không rõ"],
@@ -1786,6 +1802,8 @@ class CayGiaPhaCard extends HTMLElement {
       .relation { fill:none; stroke:var(--family-line); stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; opacity:.96; vector-effect:non-scaling-stroke; }
       .relation-spouse, .relation-parent-union { stroke-width:1.75; }
       .relation-adopted { stroke-dasharray:4 5; stroke-width:1.8; }
+      .relation-stepchild { stroke-dasharray:8 4 2 4; stroke-width:1.9; }
+      .relation-divorced { stroke-dasharray:7 5; opacity:.8; }
       .relation-explicit-sibling { stroke-dasharray:3 5; opacity:.65; }
       .branch-toggle {
         position:absolute;
@@ -1858,7 +1876,7 @@ class CayGiaPhaCard extends HTMLElement {
       .avatar-wrap img, .avatar-placeholder { width:100%; height:100%; display:grid; place-items:center; border-radius:50%; object-fit:cover; background:color-mix(in srgb, var(--accent) 10%, #f4f1e8); color:var(--accent); font-family:var(--family-title-font); font-size:calc(var(--avatar) * .28); font-weight:700; }
       .deceased .avatar-wrap img { filter:grayscale(1) contrast(.94); }
       .deceased { opacity:1; }
-      .memorial, .adopted-mark { position:absolute; bottom:-1px; display:grid; place-items:center; border-radius:50%; border:2px solid white; color:white; font-weight:700; box-shadow:0 2px 5px rgba(0,0,0,.13); }
+      .memorial, .adopted-mark, .stepchild-mark { position:absolute; bottom:-1px; display:grid; place-items:center; border-radius:50%; border:2px solid white; color:white; font-weight:700; box-shadow:0 2px 5px rgba(0,0,0,.13); }
       .memorial {
         right:-7px;
         bottom:-4px;
@@ -1871,6 +1889,7 @@ class CayGiaPhaCard extends HTMLElement {
       }
       .memorial ha-icon { --mdc-icon-size:21px; filter:drop-shadow(0 1px 1px rgba(89,39,0,.45)); }
       .adopted-mark { left:-2px; width:20px; height:20px; background:#7b735f; font-size:9px; }
+      .stepchild-mark { left:-2px; width:20px; height:20px; background:#7c4d9b; font-size:9px; }
       .message { min-height:270px; display:flex; align-items:center; justify-content:center; gap:10px; padding:28px; text-align:center; color:var(--family-muted); }
       .message ha-icon { --mdc-icon-size:28px; }
       .message.error { color:var(--error-color,#c62828); }
@@ -1886,7 +1905,7 @@ class CayGiaPhaCard extends HTMLElement {
       .detail-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
       .detail-grid div { min-width:0; padding:9px 10px; border:1px solid color-mix(in srgb, var(--family-border) 72%, transparent); border-radius:11px; background:#fbfaf6; }
       .detail-grid span { display:block; margin-bottom:3px; color:var(--family-muted); font-size:10px; }
-      .detail-grid strong { display:block; overflow-wrap:anywhere; font-size:12px; font-weight:600; }
+      .detail-grid strong { display:block; overflow-wrap:anywhere; white-space:pre-line; font-size:12px; font-weight:600; }
       .detail-notes { margin-top:13px; padding:12px; border-radius:12px; background:#f7f4ec; }
       .detail-notes h3 { margin:0 0 5px; font-size:12px; }
       .detail-notes p { margin:0; color:var(--family-muted); font-size:12px; line-height:1.55; }
