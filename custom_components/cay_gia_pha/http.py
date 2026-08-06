@@ -33,11 +33,13 @@ class FamilyTreeImageView(HomeAssistantView):
         if runtime is None:
             raise web.HTTPNotFound
 
-        person = await runtime.store.async_person(person_id)
+        person = runtime.coordinator.person(person_id)
         if person is None or not person.get("image_path"):
             raise web.HTTPNotFound
 
-        path = resolve_image_path(hass, str(person["image_path"]))
+        path = await hass.async_add_executor_job(
+            resolve_image_path, hass, str(person["image_path"])
+        )
         if path is None:
             raise web.HTTPNotFound
         return web.FileResponse(path)

@@ -2,7 +2,7 @@
   "domain": "cay_gia_pha",
   "name": "Cây Gia Phả",
   "codeowners": [
-    "@khaisilk1910"
+    "@YOUR_GITHUB_USERNAME"
   ],
   "config_flow": true,
   "dependencies": [
@@ -11,10 +11,10 @@
     "http",
     "websocket_api"
   ],
-  "documentation": "https://github.com/khaisilk1910/cay-gia-pha",
+  "documentation": "https://github.com/YOUR_GITHUB_USERNAME/cay-gia-pha",
   "integration_type": "service",
   "iot_class": "local_push",
-  "issue_tracker": "https://github.com/khaisilk1910/cay-gia-pha/issues",
+  "issue_tracker": "https://github.com/YOUR_GITHUB_USERNAME/cay-gia-pha/issues",
   "requirements": [],
-  "version": "2026.08.06.1445"
+  "version": "0.3.13"
 }

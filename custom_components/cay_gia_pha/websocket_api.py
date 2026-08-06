@@ -56,7 +56,7 @@ async def websocket_get_tree(
             person["image_url"] = async_sign_path(
                 hass,
                 image_path,
-                timedelta(minutes=20),
+                timedelta(days=7),
             )
         person.pop(CONF_IMAGE_PATH, None)
         people.append(person)

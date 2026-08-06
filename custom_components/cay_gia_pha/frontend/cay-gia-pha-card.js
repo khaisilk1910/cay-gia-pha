@@ -1,4 +1,8 @@
-const CARD_VERSION = "0.3.12";
+const CARD_VERSION = "0.3.13";
+
+const TREE_CACHE_MAX_AGE = 6 * 24 * 60 * 60 * 1000;
+const FAMILY_TREE_CACHE = new Map();
+let CARD_STYLES_CACHE = null;
 
 const DEFAULT_CONFIG = {
   title: "Gia Phả Cụ Tiến Tiệp",
@@ -36,9 +40,9 @@ const DEFAULT_CONFIG = {
 const GENDER_LABEL = { male: "Nam", female: "Nữ", other: "Khác" };
 
 const DEFAULT_AVATAR_URLS = {
-  male: "/cay_gia_pha_static/avatar-male.svg?v=0.3.12",
-  female: "/cay_gia_pha_static/avatar-female.svg?v=0.3.12",
-  other: "/cay_gia_pha_static/avatar-placeholder.svg?v=0.3.12",
+  male: "/cay_gia_pha_static/avatar-male.svg?v=0.3.13",
+  female: "/cay_gia_pha_static/avatar-female.svg?v=0.3.13",
+  other: "/cay_gia_pha_static/avatar-placeholder.svg?v=0.3.13",
 };
 
 const FONT_OPTIONS = [
@@ -63,6 +67,9 @@ class CayGiaPhaCard extends HTMLElement {
     this._loading = false;
     this._error = null;
     this._requestKey = null;
+    this._loadingKey = null;
+    this._treeLoadedAt = 0;
+    this._summaryEntityId = null;
     this._selectedPersonId = null;
     this._zoom = DEFAULT_CONFIG.initial_zoom / 100;
     this._needsInitialCenter = true;
@@ -76,18 +83,37 @@ class CayGiaPhaCard extends HTMLElement {
     this._imageRefreshTimer = null;
     this._resizeTimer = null;
     this._observedWidth = 0;
+    this._normalizedTree = null;
+    this._normalizedPeople = [];
+    this._completeMaps = null;
+    this._collapseFamiliesCache = null;
+    this._layoutCache = null;
+    this._layoutDirty = true;
+    this._waitingForEntityRendered = false;
+
+    this.shadowRoot.addEventListener("click", (event) => this._handleShadowClick(event));
+    this.shadowRoot.addEventListener("keydown", (event) => this._handleShadowKeydown(event));
+    this.shadowRoot.addEventListener("error", (event) => this._handleImageError(event), true);
+
     this._resizeObserver = new ResizeObserver((entries) => {
       const width = Math.round(entries[0]?.contentRect?.width || this.clientWidth || 0);
       if (!width || Math.abs(width - this._observedWidth) < 2) return;
       this._observedWidth = width;
       clearTimeout(this._resizeTimer);
-      this._resizeTimer = setTimeout(() => this._render(), 80);
+      this._resizeTimer = setTimeout(() => {
+        this._layoutDirty = true;
+        this._render();
+      }, 80);
     });
   }
 
   connectedCallback() {
     this._resizeObserver.observe(this);
     this._render();
+    if (this._tree && this._requestKey) {
+      this._scheduleImageRefresh(this._requestKey, this._tree);
+    }
+    if (this._hass) this._maybeLoadTree();
   }
 
   disconnectedCallback() {
@@ -121,21 +147,23 @@ class CayGiaPhaCard extends HTMLElement {
     if (!config || typeof config !== "object") {
       throw new Error("Cấu hình thẻ Cây Gia Phả không hợp lệ");
     }
-    this._config = { ...DEFAULT_CONFIG, ...config };
-    this._requestKey = null;
-    this._tree = null;
+    const nextConfig = { ...DEFAULT_CONFIG, ...config };
+    if (sameCardConfig(this._config, nextConfig) && this.shadowRoot?.childElementCount) return;
+
+    this._config = nextConfig;
     this._error = null;
     this._zoom = this._initialZoom();
     this._needsInitialCenter = true;
     this._collapsedFamilies.clear();
     this._initialGenerationApplied = false;
+    this._layoutDirty = true;
     this._render();
     this._maybeLoadTree();
   }
 
   set hass(hass) {
     this._hass = hass;
-    this._maybeLoadTree();
+    this._maybeLoadTree(this._findSummaryEntity());
   }
 
   get hass() {
@@ -144,20 +172,40 @@ class CayGiaPhaCard extends HTMLElement {
 
   _findSummaryEntity() {
     if (!this._hass) return null;
-    return Object.values(this._hass.states).find(
-      (state) =>
+    if (this._summaryEntityId) {
+      const cached = this._hass.states[this._summaryEntityId];
+      if (
+        cached?.attributes?.integration === "cay_gia_pha" &&
+        cached.attributes?.entry_id &&
+        !cached.attributes?.person_id
+      ) {
+        return cached;
+      }
+      this._summaryEntityId = null;
+    }
+
+    for (const [entityId, state] of Object.entries(this._hass.states)) {
+      if (
         state.attributes?.integration === "cay_gia_pha" &&
         state.attributes?.entry_id &&
         !state.attributes?.person_id
-    );
+      ) {
+        this._summaryEntityId = entityId;
+        return state;
+      }
+    }
+    return null;
   }
 
-  async _maybeLoadTree() {
-    const entity = this._findSummaryEntity();
+  async _maybeLoadTree(entity = this._findSummaryEntity()) {
     if (!this._hass || !entity) {
-      this._render();
+      if (!this._tree && !this._loadingKey && !this._waitingForEntityRendered) {
+        this._waitingForEntityRendered = true;
+        this._render();
+      }
       return;
     }
+    this._waitingForEntityRendered = false;
 
     const entryId = entity.attributes.entry_id;
     const revision = entity.attributes.revision ?? 0;
@@ -168,26 +216,25 @@ class CayGiaPhaCard extends HTMLElement {
     }
 
     const requestKey = `${entryId}:${revision}`;
-    if (this._loading || this._requestKey === requestKey) return;
+    if (this._loadingKey || this._requestKey === requestKey) return;
 
-    this._loading = true;
+    this._loadingKey = requestKey;
+    this._loading = !this._tree;
     this._error = null;
-    this._render();
+    if (this._loading) this._render();
     try {
-      const tree = await this._hass.callWS({
-        type: "cay_gia_pha/get_tree",
-        entry_id: entryId,
-      });
+      const tree = await loadFamilyTree(this._hass, entryId, revision);
+      const currentEntity = this._findSummaryEntity();
+      const currentKey = currentEntity
+        ? `${currentEntity.attributes.entry_id}:${currentEntity.attributes.revision ?? 0}`
+        : null;
+      if (currentKey !== requestKey) return;
+
       this._tree = tree;
       this._requestKey = requestKey;
-      if (this._imageRefreshTimer) clearTimeout(this._imageRefreshTimer);
-      if (tree.people?.some((person) => person.image_url)) {
-        this._imageRefreshTimer = setTimeout(() => {
-          if (!this.isConnected) return;
-          this._requestKey = null;
-          this._maybeLoadTree();
-        }, 15 * 60 * 1000);
-      }
+      this._treeLoadedAt = Date.now();
+      this._invalidateTreeCaches();
+      this._scheduleImageRefresh(requestKey, tree);
       if (
         this._selectedPersonId &&
         !tree.people.some((person) => String(person.person_id) === this._selectedPersonId)
@@ -197,8 +244,14 @@ class CayGiaPhaCard extends HTMLElement {
     } catch (error) {
       this._error = error?.message || String(error);
     } finally {
+      if (this._loadingKey === requestKey) this._loadingKey = null;
       this._loading = false;
-      this._render();
+      const currentEntity = this._findSummaryEntity();
+      const currentKey = currentEntity
+        ? `${currentEntity.attributes.entry_id}:${currentEntity.attributes.revision ?? 0}`
+        : null;
+      if (this._requestKey === requestKey || this._error) this._render();
+      if (currentKey && currentKey !== this._requestKey) this._maybeLoadTree(currentEntity);
     }
   }
 
@@ -210,11 +263,7 @@ class CayGiaPhaCard extends HTMLElement {
       : null;
     const config = this._config;
     const tree = this._tree;
-    const normalizedPeople = tree ? this._normalizePeople(tree.people || []) : [];
-    const layout = tree ? this._buildLayout(normalizedPeople) : null;
-    const selected = normalizedPeople.find(
-      (person) => person.person_id === this._selectedPersonId
-    );
+    const layout = tree ? this._getLayout() : null;
     const title = config.title || tree?.title || "Cây Gia Phả";
 
     this.shadowRoot.innerHTML = `
@@ -232,7 +281,6 @@ class CayGiaPhaCard extends HTMLElement {
         </header>
         ${config.show_summary && tree ? this._summary(tree.stats || {}) : ""}
         <div class="family-content">${this._content(layout)}</div>
-        ${selected && config.show_details ? this._detailPanel(selected, normalizedPeople) : ""}
       </ha-card>
     `;
 
@@ -261,6 +309,8 @@ class CayGiaPhaCard extends HTMLElement {
         card.style.removeProperty("--family-bg-image");
       }
     }
+
+    this._renderDetailPanel();
 
     const scroller = this.shadowRoot.querySelector(".tree-scroll");
     if (scroller) {
@@ -295,69 +345,97 @@ class CayGiaPhaCard extends HTMLElement {
       });
     }
 
-    this.shadowRoot.querySelectorAll(".person-node").forEach((node) => {
-      const open = () => {
-        if (Date.now() < this._suppressPersonClickUntil) return;
-        this._selectedPersonId = node.dataset.personId;
-        this._render();
-      };
-      node.addEventListener("click", open);
-      node.addEventListener("keydown", (event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          open();
-        }
-      });
-    });
+  }
 
-    this.shadowRoot.querySelectorAll("img[data-fallback]").forEach((image) => {
-      image.addEventListener("error", () => {
-        const fallbackSrc = image.dataset.fallbackSrc;
-        if (fallbackSrc && image.getAttribute("src") !== fallbackSrc) {
-          image.src = fallbackSrc;
-          delete image.dataset.fallbackSrc;
-          return;
-        }
-        const fallback = document.createElement("div");
-        fallback.className = image.dataset.fallbackClass || "avatar-placeholder";
-        fallback.textContent = image.dataset.fallback || "?";
-        image.replaceWith(fallback);
-      });
-    });
+  _handleShadowClick(event) {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
 
-    this.shadowRoot.querySelector(".detail-close")?.addEventListener("click", () => {
-      this._selectedPersonId = null;
+    const closeButton = target.closest(".detail-close");
+    if (closeButton) {
+      this._setSelectedPerson(null);
+      return;
+    }
+
+    if (target.classList.contains("detail-backdrop")) {
+      this._setSelectedPerson(null);
+      return;
+    }
+
+    const branchButton = target.closest(".branch-toggle");
+    if (branchButton) {
+      event.preventDefault();
+      event.stopPropagation();
+      const familyKey = branchButton.dataset.familyKey;
+      if (!familyKey) return;
+      if (this._collapsedFamilies.has(familyKey)) this._collapsedFamilies.delete(familyKey);
+      else this._collapsedFamilies.add(familyKey);
+      this._layoutDirty = true;
       this._render();
-    });
-    this.shadowRoot.querySelector(".detail-backdrop")?.addEventListener("click", (event) => {
-      if (event.target.classList.contains("detail-backdrop")) {
-        this._selectedPersonId = null;
-        this._render();
-      }
-    });
+      return;
+    }
 
-    this.shadowRoot.querySelectorAll(".branch-toggle").forEach((button) => {
-      button.addEventListener("pointerdown", (event) => event.stopPropagation());
-      button.addEventListener("click", (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        const familyKey = button.dataset.familyKey;
-        if (!familyKey) return;
-        if (this._collapsedFamilies.has(familyKey)) this._collapsedFamilies.delete(familyKey);
-        else this._collapsedFamilies.add(familyKey);
-        this._render();
-      });
-    });
+    const zoomButton = target.closest("[data-zoom]");
+    if (zoomButton) {
+      const action = zoomButton.dataset.zoom;
+      const currentScroller = this.shadowRoot.querySelector(".tree-scroll");
+      if (action === "in") this._setZoom(this._zoom + 0.1, currentScroller);
+      if (action === "out") this._setZoom(this._zoom - 0.1, currentScroller);
+      if (action === "reset") this._setZoom(this._initialZoom(), currentScroller, null, null, true);
+      return;
+    }
 
-    this.shadowRoot.querySelectorAll("[data-zoom]").forEach((button) => {
-      button.addEventListener("click", () => {
-        const action = button.dataset.zoom;
-        const currentScroller = this.shadowRoot.querySelector(".tree-scroll");
-        if (action === "in") this._setZoom(this._zoom + 0.1, currentScroller);
-        if (action === "out") this._setZoom(this._zoom - 0.1, currentScroller);
-        if (action === "reset") this._setZoom(this._initialZoom(), currentScroller, null, null, true);
-      });
-    });
+    const node = target.closest(".person-node");
+    if (!node || Date.now() < this._suppressPersonClickUntil) return;
+    this._setSelectedPerson(node.dataset.personId);
+  }
+
+  _handleShadowKeydown(event) {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    const node = target.closest(".person-node");
+    if (!node || Date.now() < this._suppressPersonClickUntil) return;
+    event.preventDefault();
+    this._setSelectedPerson(node.dataset.personId);
+  }
+
+  _setSelectedPerson(personId) {
+    this._selectedPersonId = personId ? String(personId) : null;
+    this._renderDetailPanel();
+  }
+
+  _renderDetailPanel() {
+    const card = this.shadowRoot?.querySelector(".family-card");
+    if (!card) return;
+    card.querySelector(":scope > .detail-backdrop")?.remove();
+    if (!this._selectedPersonId || !this._config?.show_details || !this._tree) return;
+
+    const people = this._prepareTreeData();
+    const person = this._completeMaps?.byId.get(this._selectedPersonId);
+    if (!person) {
+      this._selectedPersonId = null;
+      return;
+    }
+    card.insertAdjacentHTML(
+      "beforeend",
+      this._detailPanel(person, people, this._completeMaps),
+    );
+  }
+
+  _handleImageError(event) {
+    const image = event.target;
+    if (!(image instanceof HTMLImageElement) || !image.matches("img[data-fallback]")) return;
+    const fallbackSrc = image.dataset.fallbackSrc;
+    if (fallbackSrc && image.getAttribute("src") !== fallbackSrc) {
+      image.src = fallbackSrc;
+      delete image.dataset.fallbackSrc;
+      return;
+    }
+    const fallback = document.createElement("div");
+    fallback.className = image.dataset.fallbackClass || "avatar-placeholder";
+    fallback.textContent = image.dataset.fallback || "?";
+    image.replaceWith(fallback);
   }
 
   _bindTreeNavigation(scroller) {
@@ -433,24 +511,32 @@ class CayGiaPhaCard extends HTMLElement {
 
   _setZoom(nextZoom, scroller = null, clientX = null, clientY = null, center = false) {
     const zoom = clampNumber(nextZoom, 0.5, 1.6, this._initialZoom());
+    const activeScroller = scroller || this.shadowRoot.querySelector(".tree-scroll");
     if (Math.abs(zoom - this._zoom) < 0.001) {
-      if (center && scroller) {
-        this._pendingViewport = { mode: "center", top: 0 };
-        this._render();
+      if (center && activeScroller) {
+        requestAnimationFrame(() => {
+          if (!activeScroller.isConnected) return;
+          activeScroller.scrollLeft = Math.max(
+            0,
+            (activeScroller.scrollWidth - activeScroller.clientWidth) / 2,
+          );
+          activeScroller.scrollTop = 0;
+        });
       }
       return;
     }
 
+    let viewport = null;
     if (center) {
-      this._pendingViewport = { mode: "center", top: 0 };
-    } else if (scroller) {
-      const stage = scroller.querySelector(".scaled-stage");
-      const scrollerRect = scroller.getBoundingClientRect();
+      viewport = { mode: "center", top: 0 };
+    } else if (activeScroller) {
+      const stage = activeScroller.querySelector(".scaled-stage");
+      const scrollerRect = activeScroller.getBoundingClientRect();
       const stageRect = stage?.getBoundingClientRect();
-      const pointerX = Number.isFinite(clientX) ? clientX : scrollerRect.left + scroller.clientWidth / 2;
-      const pointerY = Number.isFinite(clientY) ? clientY : scrollerRect.top + scroller.clientHeight / 2;
+      const pointerX = Number.isFinite(clientX) ? clientX : scrollerRect.left + activeScroller.clientWidth / 2;
+      const pointerY = Number.isFinite(clientY) ? clientY : scrollerRect.top + activeScroller.clientHeight / 2;
       if (stageRect) {
-        this._pendingViewport = {
+        viewport = {
           mode: "focal",
           treeX: (pointerX - stageRect.left) / this._zoom,
           treeY: (pointerY - stageRect.top) / this._zoom,
@@ -461,7 +547,102 @@ class CayGiaPhaCard extends HTMLElement {
     }
 
     this._zoom = zoom;
-    this._render();
+    const layout = this._layoutCache;
+    const stage = activeScroller?.querySelector(".scaled-stage");
+    const canvas = activeScroller?.querySelector(".tree-canvas");
+    if (!layout || !stage || !canvas) {
+      this._pendingViewport = viewport;
+      this._render();
+      return;
+    }
+
+    stage.style.width = `${Math.ceil(layout.width * zoom)}px`;
+    stage.style.height = `${Math.ceil(layout.height * zoom)}px`;
+    canvas.style.transform = `scale(${zoom})`;
+    canvas.style.setProperty("--branch-size", `${16 / zoom}px`);
+    canvas.style.setProperty("--branch-border", `${1 / zoom}px`);
+    canvas.style.setProperty("--branch-icon", `${10 / zoom}px`);
+    canvas.style.setProperty("--branch-shadow-y", `${1.5 / zoom}px`);
+    canvas.style.setProperty("--branch-shadow-blur", `${5 / zoom}px`);
+    activeScroller.querySelectorAll(".branch-toggle[data-base-y]").forEach((button) => {
+      button.style.top = `${round(Number(button.dataset.baseY) + 9 / zoom)}px`;
+    });
+
+    const resetButton = this.shadowRoot.querySelector('[data-zoom="reset"]');
+    const zoomText = resetButton?.querySelector("span");
+    if (zoomText) zoomText.textContent = `${Math.round(zoom * 100)}%`;
+    if (resetButton) resetButton.title = `Về mức mặc định ${Math.round(this._initialZoom() * 100)}%`;
+
+    requestAnimationFrame(() => {
+      if (!activeScroller.isConnected) return;
+      if (viewport?.mode === "focal") {
+        activeScroller.scrollLeft = Math.max(
+          0,
+          stage.offsetLeft + viewport.treeX * zoom - viewport.viewportX,
+        );
+        activeScroller.scrollTop = Math.max(
+          0,
+          stage.offsetTop + viewport.treeY * zoom - viewport.viewportY,
+        );
+      } else if (viewport?.mode === "center") {
+        activeScroller.scrollLeft = Math.max(
+          0,
+          (activeScroller.scrollWidth - activeScroller.clientWidth) / 2,
+        );
+        activeScroller.scrollTop = Math.max(0, viewport.top || 0);
+      }
+    });
+  }
+
+  _invalidateTreeCaches() {
+    this._normalizedTree = null;
+    this._normalizedPeople = [];
+    this._completeMaps = null;
+    this._collapseFamiliesCache = null;
+    this._layoutCache = null;
+    this._layoutDirty = true;
+    this._initialGenerationApplied = false;
+  }
+
+  _scheduleImageRefresh(requestKey, tree) {
+    if (this._imageRefreshTimer) clearTimeout(this._imageRefreshTimer);
+    this._imageRefreshTimer = null;
+    if (!tree?.people?.some((person) => person.image_url)) return;
+
+    const elapsed = Math.max(0, Date.now() - (this._treeLoadedAt || Date.now()));
+    const delay = Math.max(1000, TREE_CACHE_MAX_AGE - elapsed);
+    this._imageRefreshTimer = setTimeout(() => {
+      this._imageRefreshTimer = null;
+      if (!this.isConnected) return;
+      FAMILY_TREE_CACHE.delete(requestKey);
+      if (this._requestKey === requestKey) this._requestKey = null;
+      this._maybeLoadTree();
+    }, delay);
+  }
+
+  _prepareTreeData() {
+    if (this._normalizedTree === this._tree) return this._normalizedPeople;
+    this._normalizedTree = this._tree;
+    this._normalizedPeople = this._normalizePeople(this._tree?.people || []);
+    this._completeMaps = this._relationshipMaps(this._normalizedPeople);
+    this._collapseFamiliesCache = this._collapseFamilies(
+      this._normalizedPeople,
+      this._completeMaps,
+    );
+    this._layoutDirty = true;
+    return this._normalizedPeople;
+  }
+
+  _getLayout() {
+    const people = this._prepareTreeData();
+    if (!this._layoutDirty && this._layoutCache) return this._layoutCache;
+    this._layoutCache = this._buildLayout(
+      people,
+      this._completeMaps,
+      this._collapseFamiliesCache,
+    );
+    this._layoutDirty = false;
+    return this._layoutCache;
   }
 
   _content(layout) {
@@ -756,10 +937,20 @@ class CayGiaPhaCard extends HTMLElement {
     return { byId, spouses, spouseRanks, siblings, componentById };
   }
 
-  _buildLayout(people) {
+  _buildLayout(people, providedCompleteMaps = null, providedCollapseFamilies = null) {
     const completePeople = people;
-    const completeMaps = this._relationshipMaps(completePeople);
-    const collapseFamilies = this._collapseFamilies(completePeople, completeMaps);
+    if (!completePeople.length) {
+      return {
+        width: Math.max(this.clientWidth - 24, 340),
+        height: 240,
+        people: [],
+        paths: [],
+        toggles: [],
+        union_sources: {},
+      };
+    }
+    const completeMaps = providedCompleteMaps || this._relationshipMaps(completePeople);
+    const collapseFamilies = providedCollapseFamilies || this._collapseFamilies(completePeople, completeMaps);
     this._applyInitialGenerationCollapse(completePeople, completeMaps, collapseFamilies);
     const hiddenIds = this._hiddenDescendantIds(completePeople, completeMaps, collapseFamilies);
     people = completePeople.filter((person) => !hiddenIds.has(person.person_id));
@@ -793,7 +984,7 @@ class CayGiaPhaCard extends HTMLElement {
         unit.memberOffsets[index] = unit.memberOffsets[index - 1] + nodeWidth + unit.memberGaps[index];
       }
       unit.width = unit.memberOffsets[unit.memberOffsets.length - 1] + nodeWidth;
-      const anchorIndex = Math.max(0, unit.members.findIndex((member) => member.person_id === unit.anchor.person_id));
+      const anchorIndex = Math.max(0, unit.memberIndex.get(unit.anchor.person_id) ?? -1);
       unit.anchorOffset = unit.memberOffsets[anchorIndex] + nodeWidth / 2;
       unit.footLeft = unit.anchorOffset;
       unit.footRight = unit.width - unit.anchorOffset;
@@ -833,6 +1024,8 @@ class CayGiaPhaCard extends HTMLElement {
           childBranches: [],
           parentBranch: null,
           left: null,
+          memberIndex: new Map(members.map((member, index) => [member.person_id, index])),
+          memberIds: new Set(members.map((member) => member.person_id)),
         };
         setBaseGeometry(unit);
         units.push(unit);
@@ -843,7 +1036,7 @@ class CayGiaPhaCard extends HTMLElement {
 
     const sourceOffsetInUnit = (unit, parentIds) => {
       const parentIndexes = uniqueStrings(parentIds)
-        .map((id) => unit.members.findIndex((member) => member.person_id === id))
+        .map((id) => unit.memberIndex.get(id) ?? -1)
         .filter((index) => index >= 0);
       if (!parentIndexes.length) return unit.anchorOffset;
       if (parentIndexes.length === 1) return unit.memberOffsets[parentIndexes[0]] + nodeWidth / 2;
@@ -856,7 +1049,7 @@ class CayGiaPhaCard extends HTMLElement {
       }
 
       const hubIndex = unit.spouseHubId
-        ? unit.members.findIndex((member) => member.person_id === unit.spouseHubId)
+        ? (unit.memberIndex.get(unit.spouseHubId) ?? -1)
         : -1;
       if (hubIndex >= 0 && parentIndexes.includes(hubIndex) && parentIndexes.length === 2) {
         const spouseIndex = parentIndexes.find((index) => index !== hubIndex);
@@ -884,7 +1077,7 @@ class CayGiaPhaCard extends HTMLElement {
 
       unit.memberGaps = unit.members.map((_, index) => index === 0 ? 0 : coupleGap);
       const hubIndex = unit.spouseHubId
-        ? unit.members.findIndex((member) => member.person_id === unit.spouseHubId)
+        ? (unit.memberIndex.get(unit.spouseHubId) ?? -1)
         : -1;
       const hub = hubIndex >= 0 ? unit.members[hubIndex] : null;
       if (hub) {
@@ -977,7 +1170,7 @@ class CayGiaPhaCard extends HTMLElement {
       spreadOverlappingMarriageBranches();
       rebuildMemberOffsets();
       unit.width = unit.memberOffsets[unit.memberOffsets.length - 1] + nodeWidth;
-      const anchorIndex = Math.max(0, unit.members.findIndex((member) => member.person_id === unit.anchor.person_id));
+      const anchorIndex = Math.max(0, unit.memberIndex.get(unit.anchor.person_id) ?? -1);
       unit.anchorOffset = unit.memberOffsets[anchorIndex] + nodeWidth / 2;
 
       let minRelative = -unit.anchorOffset;
@@ -1025,6 +1218,7 @@ class CayGiaPhaCard extends HTMLElement {
           parentIds: uniqueStrings(parentIds),
           childUnits,
           placements,
+          placementByUnit: new Map(placements.map((placement) => [placement.unit.id, placement])),
           width,
           left: anchorSpanCenter,
           right: width - anchorSpanCenter,
@@ -1046,7 +1240,7 @@ class CayGiaPhaCard extends HTMLElement {
       units.forEach((unit) => {
         const branch = unit.parentBranch;
         const parentLeft = branch ? unitPositions.get(branch.parentUnit.id) : null;
-        const placement = branch?.placements.find((item) => item.unit.id === unit.id);
+        const placement = branch?.placementByUnit.get(unit.id);
         if (branch && parentLeft !== undefined && parentLeft !== null && placement) {
           const sourceX = parentLeft + sourceOffsetInUnit(branch.parentUnit, branch.parentIds);
           unit.left = sourceX + placement.offset - unit.anchorOffset;
@@ -1094,6 +1288,12 @@ class CayGiaPhaCard extends HTMLElement {
     const globalShift = marginX - rawMinX + extraCentering;
     positioned.forEach((person) => { person.x += globalShift; });
     unitsByLevel.forEach((units) => units.forEach((unit) => { unit.left += globalShift; }));
+    const positionedByUnit = new Map();
+    positioned.forEach((person) => {
+      if (!positionedByUnit.has(person.unit_id)) positionedByUnit.set(person.unit_id, []);
+      positionedByUnit.get(person.unit_id).push(person);
+    });
+    positionedByUnit.forEach((members) => members.sort((a, b) => a.x - b.x));
 
     const height = marginTop * 2 + levels.length * nodeHeight + Math.max(0, levels.length - 1) * vGap + 24;
     const paths = [];
@@ -1104,7 +1304,7 @@ class CayGiaPhaCard extends HTMLElement {
       units.forEach((unit) => {
         unit.members.forEach((member) => {
           (maps.spouses.get(member.person_id) || []).forEach((spouseId) => {
-            if (!unit.members.some((candidate) => candidate.person_id === spouseId)) return;
+            if (!unit.memberIds.has(spouseId)) return;
             const key = pairKey(member.person_id, spouseId);
             if (unionSources.has(key)) return;
             const first = positions.get(member.person_id);
@@ -1132,9 +1332,7 @@ class CayGiaPhaCard extends HTMLElement {
         let lineStart = left.x + left.nodeWidth;
         let lineEnd = right.x;
         if (union && first.unit_id === second.unit_id) {
-          const unitMembers = [...positions.values()]
-            .filter((candidate) => candidate.unit_id === first.unit_id)
-            .sort((a, b) => a.x - b.x);
+          const unitMembers = positionedByUnit.get(first.unit_id) || [];
           const leftNeighbor = [...unitMembers]
             .reverse()
             .find((candidate) => candidate.x + candidate.nodeWidth <= union.x + 0.5);
@@ -1310,6 +1508,7 @@ class CayGiaPhaCard extends HTMLElement {
       <button
         class="branch-toggle${toggle.collapsed ? " is-collapsed" : ""}"
         data-family-key="${escapeAttr(toggle.key)}"
+        data-base-y="${round(toggle.y)}"
         style="left:${round(toggle.x)}px;top:${round(toggle.y + 9 / this._zoom)}px"
         aria-expanded="${toggle.collapsed ? "false" : "true"}"
         aria-label="${action} nhánh gia đình có ${toggle.childCount} người con"
@@ -1350,8 +1549,8 @@ class CayGiaPhaCard extends HTMLElement {
       </div>`).join("")}</div>`;
   }
 
-  _detailPanel(person, people) {
-    const maps = this._relationshipMaps(people);
+  _detailPanel(person, people, providedMaps = null) {
+    const maps = providedMaps || this._relationshipMaps(people);
     const father = person.father_id ? maps.byId.get(person.father_id) : null;
     const mother = person.mother_id ? maps.byId.get(person.mother_id) : null;
     const spouseItems = [...(maps.spouses.get(person.person_id) || [])]
@@ -1474,7 +1673,8 @@ class CayGiaPhaCard extends HTMLElement {
   }
 
   _styles() {
-    return `
+    if (CARD_STYLES_CACHE) return CARD_STYLES_CACHE;
+    CARD_STYLES_CACHE = `
       :host { display:block; min-width:0; }
       * { box-sizing:border-box; }
       .family-card {
@@ -1710,6 +1910,7 @@ class CayGiaPhaCard extends HTMLElement {
         .detail-grid { grid-template-columns:1fr; }
       }
     `;
+    return CARD_STYLES_CACHE;
   }
 }
 
@@ -1897,6 +2098,34 @@ class CayGiaPhaCardEditor extends HTMLElement {
       composed: true,
     }));
   }
+}
+
+async function loadFamilyTree(hass, entryId, revision) {
+  const key = `${entryId}:${revision}`;
+  for (const cachedKey of FAMILY_TREE_CACHE.keys()) {
+    if (cachedKey !== key && cachedKey.startsWith(`${entryId}:`)) {
+      FAMILY_TREE_CACHE.delete(cachedKey);
+    }
+  }
+  const cached = FAMILY_TREE_CACHE.get(key);
+  if (cached?.tree && Date.now() - cached.loadedAt < TREE_CACHE_MAX_AGE) {
+    return cached.tree;
+  }
+  if (cached?.promise) return cached.promise;
+
+  const promise = hass.callWS({
+    type: "cay_gia_pha/get_tree",
+    entry_id: entryId,
+  }).then((tree) => {
+    FAMILY_TREE_CACHE.set(key, { tree, loadedAt: Date.now() });
+    return tree;
+  }).catch((error) => {
+    if (FAMILY_TREE_CACHE.get(key)?.promise === promise) FAMILY_TREE_CACHE.delete(key);
+    throw error;
+  });
+
+  FAMILY_TREE_CACHE.set(key, { promise, loadedAt: Date.now() });
+  return promise;
 }
 
 function sameCardConfig(left, right) {
@@ -2224,7 +2453,11 @@ function installFamilyTreeImagePreviewEnhancer() {
         return;
       }
       if (!isFamilyTreeImageField(host)) {
-        if (attempt < 12) setTimeout(() => setupImagePreview(host, attempt + 1), 50);
+        // Do not keep scheduling work for unrelated file selectors across Home
+        // Assistant. Retry only while the selector metadata has not arrived yet.
+        if ((!host.selector || host.label === undefined) && attempt < 12) {
+          setTimeout(() => setupImagePreview(host, attempt + 1), 50);
+        }
         return;
       }
 

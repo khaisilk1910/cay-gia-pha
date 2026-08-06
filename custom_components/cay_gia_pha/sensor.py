@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from homeassistant.components.http.auth import async_sign_path
@@ -33,9 +33,6 @@ from .const import (
     CONF_LEVEL,
     CONF_MOTHER_ID,
     CONF_PERSON_ID,
-    CONF_SIBLING_IDS,
-    CONF_SPOUSE_ID,
-    CONF_SPOUSE_IDS,
     CONF_SPOUSE_ORDER,
     DOMAIN,
     GENDER_FEMALE,
@@ -98,13 +95,14 @@ async def async_setup_entry(
                 person_entities.pop(person_id, None)
                 hass.async_create_task(entity.async_remove())
                 continue
-            if entity.hass is not None:
-                entity.async_write_ha_state()
+
+        # Existing CoordinatorEntity instances receive the same coordinator
+        # update through their own listener. Writing them again here doubles
+        # state serialization work on every family-tree change.
 
     @callback
-    def async_refresh_ages(now: datetime) -> None:
+    def async_refresh_ages(_now: datetime) -> None:
         """Refresh age states once a day without polling SQLite."""
-        summary.async_write_ha_state()
         for entity in person_entities.values():
             if entity.hass is not None:
                 entity.async_write_ha_state()
@@ -180,6 +178,9 @@ class FamilyTreePersonSensor(CoordinatorEntity[FamilyTreeCoordinator], SensorEnt
         self._entry = entry
         self._person_id = person_id
         self._attr_unique_id = f"{entry.entry_id}_person_{person_id}"
+        self._signed_picture_url: str | None = None
+        self._signed_picture_source: str | None = None
+        self._signed_picture_refresh_at: datetime | None = None
 
     @property
     def name(self) -> str:
@@ -222,12 +223,32 @@ class FamilyTreePersonSensor(CoordinatorEntity[FamilyTreeCoordinator], SensorEnt
             or not person.get(CONF_IMAGE_PATH)
             or self.hass is None
         ):
+            self._signed_picture_url = None
+            self._signed_picture_source = None
+            self._signed_picture_refresh_at = None
             return None
+        source = (
+            f"{person[CONF_IMAGE_PATH]}:"
+            f"{self.coordinator.data.get('revision', 0)}"
+        )
+        now = datetime.now(UTC)
+        if (
+            self._signed_picture_url is not None
+            and self._signed_picture_source == source
+            and self._signed_picture_refresh_at is not None
+            and now < self._signed_picture_refresh_at
+        ):
+            return self._signed_picture_url
         path = IMAGE_API_URL.format(
             entry_id=self._entry.entry_id,
             person_id=self._person_id,
         )
-        return async_sign_path(self.hass, path, timedelta(days=7))
+        self._signed_picture_url = async_sign_path(
+            self.hass, path, timedelta(days=7)
+        )
+        self._signed_picture_source = source
+        self._signed_picture_refresh_at = now + timedelta(days=6)
+        return self._signed_picture_url
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -236,16 +257,10 @@ class FamilyTreePersonSensor(CoordinatorEntity[FamilyTreeCoordinator], SensorEnt
         if person is None:
             return {}
 
-        people = self.coordinator.data.get("people", [])
-        by_id = {
-            str(item.get(CONF_PERSON_ID)): item
-            for item in people
-            if item.get(CONF_PERSON_ID)
-        }
-        father = by_id.get(str(person.get(CONF_FATHER_ID) or ""))
-        mother = by_id.get(str(person.get(CONF_MOTHER_ID) or ""))
-        spouse_ids = _resolved_spouse_ids(person, people)
-        sibling_ids = _resolved_sibling_ids(person, people)
+        father = self.coordinator.person(str(person.get(CONF_FATHER_ID) or ""))
+        mother = self.coordinator.person(str(person.get(CONF_MOTHER_ID) or ""))
+        spouse_ids = self.coordinator.spouse_ids(self._person_id)
+        sibling_ids = self.coordinator.sibling_ids(self._person_id)
         age = _person_age(person)
 
         return {
@@ -278,18 +293,18 @@ class FamilyTreePersonSensor(CoordinatorEntity[FamilyTreeCoordinator], SensorEnt
             "mother": mother.get(CONF_FULL_NAME) if mother else None,
             "mother_id": person.get(CONF_MOTHER_ID),
             "spouse": [
-                by_id[person_id].get(CONF_FULL_NAME)
+                spouse.get(CONF_FULL_NAME)
                 for person_id in spouse_ids
-                if person_id in by_id
+                if (spouse := self.coordinator.person(person_id)) is not None
             ],
-            "spouse_ids": spouse_ids,
+            "spouse_ids": list(spouse_ids),
             "spouse_order": person.get(CONF_SPOUSE_ORDER, 1),
             "siblings": [
-                by_id[person_id].get(CONF_FULL_NAME)
+                sibling.get(CONF_FULL_NAME)
                 for person_id in sibling_ids
-                if person_id in by_id
+                if (sibling := self.coordinator.person(person_id)) is not None
             ],
-            "sibling_ids": sibling_ids,
+            "sibling_ids": list(sibling_ids),
             "details": person.get(CONF_DETAILS),
             "revision": self.coordinator.data.get("revision", 0),
         }
@@ -297,14 +312,7 @@ class FamilyTreePersonSensor(CoordinatorEntity[FamilyTreeCoordinator], SensorEnt
     @property
     def _person(self) -> dict[str, Any] | None:
         """Return this person's current coordinator record."""
-        return next(
-            (
-                person
-                for person in self.coordinator.data.get("people", [])
-                if str(person.get(CONF_PERSON_ID)) == self._person_id
-            ),
-            None,
-        )
+        return self.coordinator.person(self._person_id)
 
 
 def _tree_device_info(entry: ConfigEntry[FamilyTreeRuntimeData]) -> DeviceInfo:
@@ -352,77 +360,3 @@ def _format_partial_date(person: dict[str, Any], *, birth: bool) -> str:
     return f"Ngày {day:02d}"
 
 
-def _resolved_spouse_ids(
-    person: dict[str, Any], people: list[dict[str, Any]]
-) -> list[str]:
-    """Return direct and reciprocal spouse links."""
-    person_id = str(person.get(CONF_PERSON_ID))
-    direct = person.get(CONF_SPOUSE_IDS) or []
-    if isinstance(direct, str):
-        direct = [direct]
-    result = [str(item) for item in direct if item and str(item) != person_id]
-    legacy_direct = person.get(CONF_SPOUSE_ID)
-    if legacy_direct and str(legacy_direct) not in result:
-        result.insert(0, str(legacy_direct))
-    for other in people:
-        other_direct = other.get(CONF_SPOUSE_IDS) or []
-        if isinstance(other_direct, str):
-            other_direct = [other_direct]
-        other_spouses = {str(item) for item in other_direct if item}
-        legacy_other = other.get(CONF_SPOUSE_ID)
-        if legacy_other:
-            other_spouses.add(str(legacy_other))
-        if person_id not in other_spouses:
-            continue
-        other_id = str(other.get(CONF_PERSON_ID) or "")
-        if other_id and other_id not in result:
-            result.append(other_id)
-    return result
-
-
-def _resolved_sibling_ids(
-    person: dict[str, Any], people: list[dict[str, Any]]
-) -> list[str]:
-    """Return explicit siblings and people with the same known parents."""
-    person_id = str(person.get(CONF_PERSON_ID))
-    raw = person.get(CONF_SIBLING_IDS) or []
-    if isinstance(raw, str):
-        raw = [raw]
-    result = [str(item) for item in raw if item and str(item) != person_id]
-
-    father_id = str(person.get(CONF_FATHER_ID) or "")
-    mother_id = str(person.get(CONF_MOTHER_ID) or "")
-    if father_id or mother_id:
-        for other in people:
-            other_id = str(other.get(CONF_PERSON_ID) or "")
-            if not other_id or other_id == person_id:
-                continue
-            if (
-                str(other.get(CONF_FATHER_ID) or "") == father_id
-                and str(other.get(CONF_MOTHER_ID) or "") == mother_id
-                and other_id not in result
-            ):
-                result.append(other_id)
-
-    for other in people:
-        raw_other = other.get(CONF_SIBLING_IDS) or []
-        if isinstance(raw_other, str):
-            raw_other = [raw_other]
-        if person_id in {str(item) for item in raw_other}:
-            other_id = str(other.get(CONF_PERSON_ID) or "")
-            if other_id and other_id not in result:
-                result.append(other_id)
-
-    by_id = {
-        str(item.get(CONF_PERSON_ID)): item
-        for item in people
-        if item.get(CONF_PERSON_ID)
-    }
-    return sorted(
-        (person_id for person_id in result if person_id in by_id),
-        key=lambda value: (
-            int(by_id[value].get(CONF_BIRTH_ORDER, 999) or 999),
-            int(by_id[value].get(CONF_BIRTH_YEAR) or 9999),
-            str(by_id[value].get(CONF_FULL_NAME, "")).casefold(),
-        ),
-    )

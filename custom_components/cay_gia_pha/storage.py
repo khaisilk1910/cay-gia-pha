@@ -77,16 +77,20 @@ class FamilyTreeStore:
         await self.hass.async_add_executor_job(self._initialize)
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.database_path, timeout=10)
+        connection = sqlite3.connect(self.database_path, timeout=5)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute("PRAGMA busy_timeout = 10000")
+        connection.execute("PRAGMA busy_timeout = 5000")
         return connection
 
     def _initialize(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         with self._connect() as connection:
-            connection.execute("PRAGMA journal_mode = WAL")
+            journal_mode = str(
+                connection.execute("PRAGMA journal_mode").fetchone()[0]
+            ).lower()
+            if journal_mode != "wal":
+                connection.execute("PRAGMA journal_mode = WAL")
             connection.execute("PRAGMA synchronous = NORMAL")
             connection.executescript(
                 """
@@ -128,7 +132,18 @@ class FamilyTreeStore:
                 );
                 """
             )
-            self._migrate_person_columns(connection)
+            schema_row = connection.execute(
+                "SELECT value FROM meta WHERE key = 'schema_version'"
+            ).fetchone()
+            try:
+                previous_schema_version = int(schema_row[0]) if schema_row else 0
+            except (TypeError, ValueError):
+                previous_schema_version = 0
+
+            columns_migrated = self._migrate_person_columns(connection)
+            if columns_migrated or previous_schema_version < DATABASE_SCHEMA_VERSION:
+                self._normalize_legacy_person_dates(connection)
+
             connection.executescript(
                 """
                 CREATE INDEX IF NOT EXISTS idx_persons_level
@@ -143,20 +158,21 @@ class FamilyTreeStore:
                     ON persons(gender);
                 """
             )
-            connection.execute(
-                """
-                INSERT INTO meta(key, value) VALUES('schema_version', ?)
-                ON CONFLICT(key) DO UPDATE SET value = excluded.value
-                """,
-                (str(DATABASE_SCHEMA_VERSION),),
-            )
+            if previous_schema_version != DATABASE_SCHEMA_VERSION:
+                connection.execute(
+                    """
+                    INSERT INTO meta(key, value) VALUES('schema_version', ?)
+                    ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                    """,
+                    (str(DATABASE_SCHEMA_VERSION),),
+                )
             connection.execute(
                 "INSERT OR IGNORE INTO meta(key, value) VALUES('revision', '0')"
             )
 
     @staticmethod
-    def _migrate_person_columns(connection: sqlite3.Connection) -> None:
-        """Add relationship and partial-date columns without losing old data."""
+    def _migrate_person_columns(connection: sqlite3.Connection) -> bool:
+        """Add missing columns and report whether the schema changed."""
         existing = {
             str(row["name"])
             for row in connection.execute("PRAGMA table_info(persons)").fetchall()
@@ -187,6 +203,11 @@ class FamilyTreeStore:
         if migrated:
             connection.execute("DROP INDEX IF EXISTS idx_persons_level")
 
+        return migrated
+
+    @staticmethod
+    def _normalize_legacy_person_dates(connection: sqlite3.Connection) -> None:
+        """Normalize legacy date columns only while upgrading the database."""
         rows = connection.execute(
             """
             SELECT person_id, birth_date, death_date, is_deceased,
@@ -206,6 +227,19 @@ class FamilyTreeStore:
             )
             if not bool(row["is_deceased"]):
                 death = (None, None, None)
+            birth_date = partial_date_to_string(*birth)
+            death_date = partial_date_to_string(*death)
+            if (
+                row["birth_date"] == birth_date
+                and row["birth_year"] == birth[0]
+                and row["birth_month"] == birth[1]
+                and row["birth_day"] == birth[2]
+                and row["death_date"] == death_date
+                and row["death_year"] == death[0]
+                and row["death_month"] == death[1]
+                and row["death_day"] == death[2]
+            ):
+                continue
             connection.execute(
                 """
                 UPDATE persons SET
@@ -214,8 +248,8 @@ class FamilyTreeStore:
                 WHERE person_id = ?
                 """,
                 (
-                    partial_date_to_string(*birth), *birth,
-                    partial_date_to_string(*death), *death,
+                    birth_date, *birth,
+                    death_date, *death,
                     row["person_id"],
                 ),
             )
@@ -238,7 +272,6 @@ class FamilyTreeStore:
 
     def _sync_subentries(self, subentries: list[dict[str, Any]]) -> list[str]:
         now = _utc_now()
-        current_ids: set[str] = set()
         removed_image_paths: list[str] = []
 
         prepared_items: list[dict[str, Any]] = []
@@ -255,16 +288,32 @@ class FamilyTreeStore:
             prepared_items.append(prepared)
             data_by_id[person_id] = data
 
+        current_ids = {item["person_id"] for item in prepared_items}
+        active_image_paths = {
+            image_path
+            for item in prepared_items
+            if (image_path := _nullable_text(item["data"].get(CONF_IMAGE_PATH)))
+        }
+
         with self._connect() as connection:
             existing_rows = {
                 row["person_id"]: row
                 for row in connection.execute("SELECT * FROM persons").fetchall()
             }
 
+            stale_ids = set(existing_rows) - current_ids
+            changed = bool(stale_ids)
+            for stale_id in stale_ids:
+                stale_image = existing_rows[stale_id]["image_path"]
+                if stale_image:
+                    removed_image_paths.append(str(stale_image))
+                connection.execute(
+                    "DELETE FROM persons WHERE person_id = ?", (stale_id,)
+                )
+
             for item in prepared_items:
                 data = item["data"]
                 person_id = item["person_id"]
-                current_ids.add(person_id)
                 existing = existing_rows.get(person_id)
                 created_at = str(
                     data.get(CONF_CREATED_AT)
@@ -302,6 +351,45 @@ class FamilyTreeStore:
                     ensure_ascii=False,
                     separators=(",", ":"),
                 )
+
+                desired = {
+                    "subentry_id": item["subentry_id"],
+                    "full_name": str(data.get(CONF_FULL_NAME, "")).strip(),
+                    "gender": str(data.get(CONF_GENDER, "other")),
+                    "birth_date": partial_date_to_string(*birth_parts),
+                    "birth_year": birth_parts[0],
+                    "birth_month": birth_parts[1],
+                    "birth_day": birth_parts[2],
+                    "death_date": partial_date_to_string(*death_parts),
+                    "death_year": death_parts[0],
+                    "death_month": death_parts[1],
+                    "death_day": death_parts[2],
+                    "is_deceased": int(is_deceased),
+                    "level": max(1, int(data.get(CONF_LEVEL, 1))),
+                    "father_id": relationships[CONF_FATHER_ID],
+                    "mother_id": relationships[CONF_MOTHER_ID],
+                    "spouse_id": relationships[CONF_SPOUSE_ID],
+                    "spouse_ids": spouse_json,
+                    "spouse_order": relationships[CONF_SPOUSE_ORDER],
+                    "sibling_ids": sibling_json,
+                    "birth_order": relationships[CONF_BIRTH_ORDER],
+                    "is_adopted": int(relationships[CONF_IS_ADOPTED]),
+                    "related_person_id": _nullable_text(
+                        data.get(CONF_RELATED_PERSON_ID)
+                    ),
+                    "relationship": _nullable_text(data.get(CONF_RELATIONSHIP)),
+                    "details": _nullable_text(data.get(CONF_DETAILS)),
+                    "image_path": new_image_path,
+                    "sort_order": int(data.get(CONF_SORT_ORDER, 0)),
+                    "created_at": created_at,
+                }
+
+                if existing is not None and all(
+                    existing[column] == value for column, value in desired.items()
+                ):
+                    continue
+
+                changed = True
 
                 connection.execute(
                     """
@@ -348,55 +436,55 @@ class FamilyTreeStore:
                     """,
                     (
                         person_id,
-                        item["subentry_id"],
-                        str(data.get(CONF_FULL_NAME, "")).strip(),
-                        str(data.get(CONF_GENDER, "other")),
-                        partial_date_to_string(*birth_parts),
-                        *birth_parts,
-                        partial_date_to_string(*death_parts),
-                        *death_parts,
-                        int(is_deceased),
-                        max(1, int(data.get(CONF_LEVEL, 1))),
-                        relationships[CONF_FATHER_ID],
-                        relationships[CONF_MOTHER_ID],
-                        relationships[CONF_SPOUSE_ID],
-                        spouse_json,
-                        relationships[CONF_SPOUSE_ORDER],
-                        sibling_json,
-                        relationships[CONF_BIRTH_ORDER],
-                        int(relationships[CONF_IS_ADOPTED]),
-                        _nullable_text(data.get(CONF_RELATED_PERSON_ID)),
-                        _nullable_text(data.get(CONF_RELATIONSHIP)),
-                        _nullable_text(data.get(CONF_DETAILS)),
-                        new_image_path,
-                        int(data.get(CONF_SORT_ORDER, 0)),
-                        created_at,
+                        desired["subentry_id"],
+                        desired["full_name"],
+                        desired["gender"],
+                        desired["birth_date"],
+                        desired["birth_year"],
+                        desired["birth_month"],
+                        desired["birth_day"],
+                        desired["death_date"],
+                        desired["death_year"],
+                        desired["death_month"],
+                        desired["death_day"],
+                        desired["is_deceased"],
+                        desired["level"],
+                        desired["father_id"],
+                        desired["mother_id"],
+                        desired["spouse_id"],
+                        desired["spouse_ids"],
+                        desired["spouse_order"],
+                        desired["sibling_ids"],
+                        desired["birth_order"],
+                        desired["is_adopted"],
+                        desired["related_person_id"],
+                        desired["relationship"],
+                        desired["details"],
+                        desired["image_path"],
+                        desired["sort_order"],
+                        desired["created_at"],
                         now,
                     ),
                 )
 
-            stale_ids = set(existing_rows) - current_ids
-            for stale_id in stale_ids:
-                stale_image = existing_rows[stale_id]["image_path"]
-                if stale_image:
-                    removed_image_paths.append(str(stale_image))
+            if changed:
+                revision_row = connection.execute(
+                    "SELECT value FROM meta WHERE key = 'revision'"
+                ).fetchone()
+                revision = int(revision_row[0]) if revision_row else 0
                 connection.execute(
-                    "DELETE FROM persons WHERE person_id = ?", (stale_id,)
+                    """
+                    INSERT INTO meta(key, value) VALUES('revision', ?)
+                    ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                    """,
+                    (str(revision + 1),),
                 )
 
-            revision_row = connection.execute(
-                "SELECT value FROM meta WHERE key = 'revision'"
-            ).fetchone()
-            revision = int(revision_row[0]) if revision_row else 0
-            connection.execute(
-                """
-                INSERT INTO meta(key, value) VALUES('revision', ?)
-                ON CONFLICT(key) DO UPDATE SET value = excluded.value
-                """,
-                (str(revision + 1),),
-            )
-
-        return list(dict.fromkeys(removed_image_paths))
+        return [
+            image_path
+            for image_path in dict.fromkeys(removed_image_paths)
+            if image_path not in active_image_paths
+        ]
 
     async def async_snapshot(self) -> dict[str, Any]:
         """Return all people and aggregate statistics."""
