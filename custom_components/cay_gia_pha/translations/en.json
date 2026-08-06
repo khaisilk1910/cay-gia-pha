@@ -103,7 +103,9 @@
             "level": "Display level (0 = automatic)",
             "sort_order": "Tie-break order",
             "spouse_ids": "Wives in order",
-            "spouse_order": "Wife order (1 = first wife)"
+            "spouse_order": "Wife order (1 = first wife)",
+            "divorced_spouse_ids": "Divorced spouses",
+            "step_parent_ids": "Step-parents (spouse’s child)"
           },
           "data_description": {
             "father_id": "May be left empty when the father is unknown. Open the field and type a name to search.",
@@ -115,7 +117,9 @@
             "level": "Leave at 0 to calculate from parents, spouse, or siblings.",
             "sort_order": "Used only when birth order and birth date are the same.",
             "spouse_ids": "For a male person: select multiple female wives and type a name to search. Select them in First wife, Wife 2, Wife 3 order; the exact position can also be set in each wife profile.",
-            "spouse_order": "For a female person. Use 1 for the first wife, 2 for Wife 2, and so on. Wives of the same husband must use different positions."
+            "spouse_order": "For a female person. Use 1 for the first wife, 2 for Wife 2, and so on. Wives of the same husband must use different positions.",
+            "divorced_spouse_ids": "Select spouses whose marriage to this person has ended. The relationship is retained so shared children remain connected; the card marks the spouse as divorced and uses a distinct connector style.",
+            "step_parent_ids": "Select the spouse of this person’s biological father or mother who is not a biological parent. This identifies a spouse’s child and lets the card distinguish the relationship from a shared biological child or an adopted child."
           }
         },
         "reconfigure": {
@@ -161,7 +165,9 @@
             "level": "Display level (0 = automatic)",
             "sort_order": "Tie-break order",
             "spouse_ids": "Wives in order",
-            "spouse_order": "Wife order (1 = first wife)"
+            "spouse_order": "Wife order (1 = first wife)",
+            "divorced_spouse_ids": "Divorced spouses",
+            "step_parent_ids": "Step-parents (spouse’s child)"
           },
           "data_description": {
             "father_id": "May be left empty when the father is unknown. Open the field and type a name to search.",
@@ -173,7 +179,9 @@
             "level": "Leave at 0 to calculate from parents, spouse, or siblings.",
             "sort_order": "Used only when birth order and birth date are the same.",
             "spouse_ids": "For a male person: select multiple female wives and type a name to search. Select them in First wife, Wife 2, Wife 3 order; the exact position can also be set in each wife profile.",
-            "spouse_order": "For a female person. Use 1 for the first wife, 2 for Wife 2, and so on. Wives of the same husband must use different positions."
+            "spouse_order": "For a female person. Use 1 for the first wife, 2 for Wife 2, and so on. Wives of the same husband must use different positions.",
+            "divorced_spouse_ids": "Select spouses whose marriage to this person has ended. The relationship is retained so shared children remain connected; the card marks the spouse as divorced and uses a distinct connector style.",
+            "step_parent_ids": "Select the spouse of this person’s biological father or mother who is not a biological parent. This identifies a spouse’s child and lets the card distinguish the relationship from a shared biological child or an adopted child."
           }
         }
       },

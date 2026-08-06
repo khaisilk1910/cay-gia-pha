@@ -103,7 +103,9 @@
             "level": "Cấp hiển thị (0 = tự động)",
             "sort_order": "Thứ tự phụ khi trùng",
             "spouse_ids": "Danh sách vợ (theo thứ tự)",
-            "spouse_order": "Thứ tự người vợ (1 = Vợ cả)"
+            "spouse_order": "Thứ tự người vợ (1 = Vợ cả)",
+            "divorced_spouse_ids": "Vợ/chồng đã ly hôn",
+            "step_parent_ids": "Cha/mẹ kế (con riêng của vợ/chồng)"
           },
           "data_description": {
             "father_id": "Có thể để trống khi chưa rõ thông tin cha. Nhấn vào ô rồi gõ tên để tìm nhanh.",
@@ -115,7 +117,9 @@
             "level": "Để 0 để tính theo cha mẹ, vợ/chồng hoặc anh chị em.",
             "sort_order": "Chỉ dùng làm tiêu chí phụ khi thứ tự sinh và ngày sinh giống nhau.",
             "spouse_ids": "Dành cho người nam: có thể chọn nhiều người nữ và gõ tên để tìm nhanh. Chọn theo thứ tự Vợ cả, Vợ 2, Vợ 3; có thể chỉnh chính xác thứ tự trong hồ sơ từng người vợ.",
-            "spouse_order": "Dành cho người nữ. Nhập 1 cho Vợ cả, 2 cho Vợ 2 và tiếp tục tăng dần. Mỗi người vợ của cùng một chồng phải có thứ tự khác nhau."
+            "spouse_order": "Dành cho người nữ. Nhập 1 cho Vợ cả, 2 cho Vợ 2 và tiếp tục tăng dần. Mỗi người vợ của cùng một chồng phải có thứ tự khác nhau.",
+            "divorced_spouse_ids": "Chọn những người trong danh sách Vợ/chồng đã chấm dứt hôn nhân với cá thể này. Quan hệ vẫn được giữ để hiển thị đúng con chung; trên thẻ sẽ ghi “đã ly hôn” và dùng kiểu đường nối riêng.",
+            "step_parent_ids": "Chọn vợ/chồng của cha hoặc mẹ nhưng không phải cha/mẹ ruột của cá thể này. Trường này dùng để xác định đây là con riêng của một bên và giúp thẻ phân biệt với con đẻ chung hoặc con nuôi."
           }
         },
         "reconfigure": {
@@ -161,7 +165,9 @@
             "level": "Cấp hiển thị (0 = tự động)",
             "sort_order": "Thứ tự phụ khi trùng",
             "spouse_ids": "Danh sách vợ (theo thứ tự)",
-            "spouse_order": "Thứ tự người vợ (1 = Vợ cả)"
+            "spouse_order": "Thứ tự người vợ (1 = Vợ cả)",
+            "divorced_spouse_ids": "Vợ/chồng đã ly hôn",
+            "step_parent_ids": "Cha/mẹ kế (con riêng của vợ/chồng)"
           },
           "data_description": {
             "father_id": "Có thể để trống khi chưa rõ thông tin cha. Nhấn vào ô rồi gõ tên để tìm nhanh.",
@@ -173,7 +179,9 @@
             "level": "Để 0 để tính theo cha mẹ, vợ/chồng hoặc anh chị em.",
             "sort_order": "Chỉ dùng làm tiêu chí phụ khi thứ tự sinh và ngày sinh giống nhau.",
             "spouse_ids": "Dành cho người nam: có thể chọn nhiều người nữ và gõ tên để tìm nhanh. Chọn theo thứ tự Vợ cả, Vợ 2, Vợ 3; có thể chỉnh chính xác thứ tự trong hồ sơ từng người vợ.",
-            "spouse_order": "Dành cho người nữ. Nhập 1 cho Vợ cả, 2 cho Vợ 2 và tiếp tục tăng dần. Mỗi người vợ của cùng một chồng phải có thứ tự khác nhau."
+            "spouse_order": "Dành cho người nữ. Nhập 1 cho Vợ cả, 2 cho Vợ 2 và tiếp tục tăng dần. Mỗi người vợ của cùng một chồng phải có thứ tự khác nhau.",
+            "divorced_spouse_ids": "Chọn những người trong danh sách Vợ/chồng đã chấm dứt hôn nhân với cá thể này. Quan hệ vẫn được giữ để hiển thị đúng con chung; trên thẻ sẽ ghi “đã ly hôn” và dùng kiểu đường nối riêng.",
+            "step_parent_ids": "Chọn vợ/chồng của cha hoặc mẹ nhưng không phải cha/mẹ ruột của cá thể này. Trường này dùng để xác định đây là con riêng của một bên và giúp thẻ phân biệt với con đẻ chung hoặc con nuôi."
           }
         }
       },
