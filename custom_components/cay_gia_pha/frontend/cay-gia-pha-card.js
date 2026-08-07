@@ -284,10 +284,21 @@ class CayGiaPhaCard extends HTMLElement {
             ${config.subtitle ? `<p>${escapeHtml(config.subtitle)}</p>` : ""}
           </div>
           ${config.show_decorations ? this._cornerOrnament("right") : ""}
-          ${config.show_zoom ? this._zoomControls() : ""}
+          <div class="header-actions">
+            ${config.show_zoom ? this._zoomControls() : ""}
+            ${tree ? this._pdfExportButton() : ""}
+          </div>
         </header>
         ${config.show_summary && tree ? this._summary(tree.stats || {}) : ""}
         <div class="family-content">${this._content(layout)}</div>
+        <div class="print-icon-cache" aria-hidden="true">
+          <ha-icon icon="mdi:account-group-outline"></ha-icon>
+          <ha-icon icon="mdi:gender-male"></ha-icon>
+          <ha-icon icon="mdi:gender-female"></ha-icon>
+          <ha-icon icon="mdi:heart-pulse"></ha-icon>
+          <ha-icon icon="mdi:candle"></ha-icon>
+          <ha-icon icon="mdi:layers-triple-outline"></ha-icon>
+        </div>
       </ha-card>
     `;
 
@@ -379,6 +390,13 @@ class CayGiaPhaCard extends HTMLElement {
       else this._collapsedFamilies.add(familyKey);
       this._layoutDirty = true;
       this._render();
+      return;
+    }
+
+    const exportButton = target.closest("[data-export-pdf]");
+    if (exportButton) {
+      event.preventDefault();
+      this._exportTreeToPdf();
       return;
     }
 
@@ -1644,6 +1662,303 @@ class CayGiaPhaCard extends HTMLElement {
     `;
   }
 
+
+  _pdfExportButton() {
+    return `
+      <button class="pdf-export-button" data-export-pdf title="Xuất PDF poster khổ tự động, giữ vector chất lượng cao" aria-label="Xuất PDF">
+        <ha-icon icon="mdi:file-pdf-box"></ha-icon>
+        <span>Xuất PDF</span>
+      </button>
+    `;
+  }
+
+  _renderedHaIconSvg(icon) {
+    const root = this.shadowRoot;
+    if (!root) return "";
+    const escaped = typeof CSS !== "undefined" && CSS.escape ? CSS.escape(icon) : icon.replace(/"/g, "\\\"");
+    const source = root.querySelector(`.print-icon-cache ha-icon[icon="${escaped}"]`)
+      || root.querySelector(`ha-icon[icon="${escaped}"]`);
+    if (!source) return "";
+
+    const findSvg = (node, seen = new Set()) => {
+      if (!node || seen.has(node)) return null;
+      seen.add(node);
+      if (node.nodeType === 1 && String(node.localName || "").toLowerCase() === "svg") return node;
+      if (node.shadowRoot) {
+        const nested = findSvg(node.shadowRoot, seen);
+        if (nested) return nested;
+      }
+      for (const child of Array.from(node.children || node.childNodes || [])) {
+        const nested = findSvg(child, seen);
+        if (nested) return nested;
+      }
+      return null;
+    };
+
+    const svg = findSvg(source);
+    if (!svg) return "";
+    const clone = svg.cloneNode(true);
+    clone.removeAttribute("width");
+    clone.removeAttribute("height");
+    clone.setAttribute("aria-hidden", "true");
+    clone.setAttribute("focusable", "false");
+    clone.classList.add("print-mdi-svg");
+    return clone.outerHTML;
+  }
+
+  _printIcon(icon) {
+    const svg = this._renderedHaIconSvg(icon);
+    if (svg) return svg;
+    // Extremely defensive fallback. Normally the hidden icon cache above is already rendered by HA.
+    return `<span class="print-icon-fallback" aria-hidden="true"></span>`;
+  }
+
+  _printPersonNode(person) {
+    return this._personNode(person)
+      .replace(/ loading="lazy"/g, ' loading="eager"')
+      .replace('<ha-icon icon="mdi:candle"></ha-icon>', `<span class="print-candle-icon" aria-hidden="true">${this._printIcon("mdi:candle")}</span>`);
+  }
+
+  _printSummary(stats = {}) {
+    const items = [
+      ["mdi:account-group-outline", "Tổng", stats.total ?? 0],
+      ["mdi:gender-male", "Nam", stats.male ?? 0],
+      ["mdi:gender-female", "Nữ", stats.female ?? 0],
+      ["mdi:heart-pulse", "Còn sống", stats.living ?? 0],
+      ["mdi:candle", "Đã mất", stats.deceased ?? 0],
+      ["mdi:layers-triple-outline", "Thế hệ", stats.levels ?? 0],
+    ];
+    return `<div class="print-summary">${items.map(([icon, label, value]) => `
+      <div class="print-summary-item"><span class="print-summary-icon" aria-hidden="true">${this._printIcon(icon)}</span><span>${escapeHtml(label)}</span><strong>${Number(value) || 0}</strong></div>`).join("")}</div>`;
+  }
+
+  _exportTreeToPdf() {
+    if (!this._tree) return;
+
+    const printWindow = window.open("", "_blank");
+    if (!printWindow) {
+      this._showExportMessage("Trình duyệt đang chặn cửa sổ xuất PDF. Hãy cho phép cửa sổ bật lên rồi thử lại.", true);
+      return;
+    }
+
+    const oldCollapsed = new Set(this._collapsedFamilies);
+    const oldLayoutCache = this._layoutCache;
+    const oldLayoutDirty = this._layoutDirty;
+    const oldCollapseCache = this._collapseFamiliesCache;
+    const oldInitialGenerationApplied = this._initialGenerationApplied;
+
+    let layout;
+    try {
+      this._collapsedFamilies.clear();
+      this._initialGenerationApplied = true;
+      this._layoutDirty = true;
+      this._collapseFamiliesCache = null;
+      layout = this._getLayout();
+    } finally {
+      this._collapsedFamilies = oldCollapsed;
+      this._layoutCache = oldLayoutCache;
+      this._layoutDirty = oldLayoutDirty;
+      this._collapseFamiliesCache = oldCollapseCache;
+      this._initialGenerationApplied = oldInitialGenerationApplied;
+    }
+
+    if (!layout?.people?.length) {
+      printWindow.close();
+      this._showExportMessage("Không có dữ liệu cây gia phả để xuất.", true);
+      return;
+    }
+
+    const config = this._config || DEFAULT_CONFIG;
+    const title = config.title || this._tree?.title || "Cây Gia Phả";
+    const scene = config.show_decorations ? this._decorativeScene(layout.width, layout.height) : "";
+    const cardStyles = this._styles();
+    const nodes = layout.people.map((person) => this._printPersonNode(person)).join("");
+    const stats = this._tree?.stats || {};
+
+    // Poster mode: the paper grows with the family tree instead of shrinking the tree to A0.
+    // Text, frames and SVG connectors remain vector in the generated PDF. Only the original
+    // portrait photos are raster, so their final sharpness depends on the source image size.
+    const pxPerMm = 96 / 25.4;
+    const mmPerPx = 1 / pxPerMm;
+    const pageMarginMm = 18;
+    const headingHeightPx = 150;
+    const summaryHeightPx = 68;
+    const treeGapPx = 24;
+    const posterInfoHeightPx = 18;
+    const treeTopPx = headingHeightPx + summaryHeightPx + posterInfoHeightPx + treeGapPx;
+
+    // Keep the tree at 100% physical size. Increase the sheet dimensions as generations grow.
+    // This avoids the quality loss/readability loss caused by fitting a very large tree onto A0.
+    let printScale = 1;
+    const naturalWidthMm = layout.width * mmPerPx + pageMarginMm * 2;
+    const naturalHeightMm = (layout.height + treeTopPx) * mmPerPx + pageMarginMm * 2;
+
+    // A0 is only the minimum canvas. The sheet expands beyond A0 when needed.
+    const a0Landscape = { width: 1189, height: 841 };
+    const a0Portrait = { width: 841, height: 1189 };
+    const portraitTree = naturalHeightMm > naturalWidthMm;
+    const minPage = portraitTree ? a0Portrait : a0Landscape;
+    let pageWidthMm = Math.max(minPage.width, naturalWidthMm);
+    let pageHeightMm = Math.max(minPage.height, naturalHeightMm);
+
+    // Chromium has implementation limits for extremely large custom paper. Keep each side under
+    // ~5 metres; only if the tree exceeds that extraordinary size do we apply one uniform scale.
+    const maxPageSideMm = 5000;
+    const maxContentWidthMm = maxPageSideMm - pageMarginMm * 2;
+    const maxContentHeightMm = maxPageSideMm - pageMarginMm * 2 - treeTopPx * mmPerPx;
+    const overflowScale = Math.min(
+      1,
+      maxContentWidthMm / Math.max(1, layout.width * mmPerPx),
+      maxContentHeightMm / Math.max(1, layout.height * mmPerPx),
+    );
+    if (overflowScale < 1) {
+      printScale = Math.max(0.1, overflowScale);
+      pageWidthMm = Math.min(maxPageSideMm, Math.max(minPage.width, layout.width * printScale * mmPerPx + pageMarginMm * 2));
+      pageHeightMm = Math.min(maxPageSideMm, Math.max(minPage.height, (layout.height * printScale + treeTopPx) * mmPerPx + pageMarginMm * 2));
+    }
+
+    pageWidthMm = Math.ceil(pageWidthMm);
+    pageHeightMm = Math.ceil(pageHeightMm);
+    const contentWidthPx = (pageWidthMm - pageMarginMm * 2) * pxPerMm;
+    const contentHeightPx = (pageHeightMm - pageMarginMm * 2) * pxPerMm;
+    const availableTreeHeightPx = Math.max(layout.height * printScale, contentHeightPx - treeTopPx);
+    const scaledTreeWidth = layout.width * printScale;
+    const scaledTreeHeight = layout.height * printScale;
+
+    printWindow.document.open();
+    printWindow.document.write(`<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${escapeHtml(title)} - PDF Poster ${pageWidthMm}x${pageHeightMm}mm</title>
+<style>
+  @page { size: ${pageWidthMm}mm ${pageHeightMm}mm; margin: 0; }
+  * { box-sizing:border-box; -webkit-print-color-adjust:exact !important; print-color-adjust:exact !important; }
+  html, body { margin:0; padding:0; background:#fff; }
+  body { font-family:${fontStack(config.content_font, "noto-sans")}; color:${safeColor(config.text_color, DEFAULT_CONFIG.text_color)}; }
+  ${cardStyles}
+  .print-sheet {
+    position:relative;
+    width:${pageWidthMm}mm;
+    height:${pageHeightMm}mm;
+    padding:${pageMarginMm}mm;
+    overflow:hidden;
+    background:${safeColor(config.background_color, DEFAULT_CONFIG.background_color)};
+    --family-bg:${safeColor(config.background_color, DEFAULT_CONFIG.background_color)};
+    --family-text:${safeColor(config.text_color, DEFAULT_CONFIG.text_color)};
+    --family-muted:${safeColor(config.muted_text_color, DEFAULT_CONFIG.muted_text_color)};
+    --family-line:${safeColor(config.line_color, DEFAULT_CONFIG.line_color)};
+    --family-border:${safeColor(config.border_color, DEFAULT_CONFIG.border_color)};
+    --family-male:${safeColor(config.male_color, DEFAULT_CONFIG.male_color)};
+    --family-female:${safeColor(config.female_color, DEFAULT_CONFIG.female_color)};
+    --family-other:${safeColor(config.other_color, DEFAULT_CONFIG.other_color)};
+    --family-decoration:${safeColor(config.decoration_color, DEFAULT_CONFIG.decoration_color)};
+    --family-title-font:${fontStack(config.title_font, "noto-serif")};
+    --family-content-font:${fontStack(config.content_font, "noto-sans")};
+  }
+  .print-heading { height:${headingHeightPx}px; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; }
+  .print-heading h1 { margin:0; font-family:${fontStack(config.title_font, "noto-serif")}; font-size:${clampNumber(config.title_font_size, 20, 80, 46)}px; line-height:1.18; }
+  .print-heading p { margin:10px 0 0; font-size:${clampNumber(config.subtitle_font_size, 10, 32, 14)}px; color:${safeColor(config.muted_text_color, DEFAULT_CONFIG.muted_text_color)}; }
+  .print-summary { height:${summaryHeightPx}px; display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:9px; align-items:center; }
+  .print-summary-item { min-width:0; display:flex; align-items:center; justify-content:center; gap:9px; padding:8px 12px; border:1px solid color-mix(in srgb,var(--family-border) 72%,transparent); border-radius:999px; background:rgba(255,255,255,.74); }
+  .print-summary-item > span:not(.print-summary-icon) { color:var(--family-muted); font-size:11px; white-space:nowrap; }
+  .print-summary-item strong { font-size:14px; }
+  .print-summary-icon { width:16px; height:16px; display:inline-grid; place-items:center; flex:0 0 16px; color:var(--family-muted); opacity:.62; }
+  .print-summary-icon .print-mdi-svg { width:16px !important; height:16px !important; display:block; fill:currentColor; }
+  .print-poster-info { height:18px; display:flex; align-items:center; justify-content:center; color:var(--family-muted); font-size:10px; letter-spacing:.01em; }
+  .print-tree-viewport { position:relative; width:100%; height:${availableTreeHeightPx}px; overflow:visible; }
+  .print-tree-scale { position:absolute; left:50%; top:0; width:${layout.width}px; height:${layout.height}px; transform:translateX(-50%) scale(${printScale}); transform-origin:top center; }
+  .print-tree { position:relative; width:${layout.width}px; height:${layout.height}px; }
+  .tree-canvas { position:relative !important; inset:auto !important; transform:none !important; width:${layout.width}px !important; height:${layout.height}px !important; --branch-size:16px; --branch-border:1px; --branch-icon:10px; --branch-shadow-y:0px; --branch-shadow-blur:0px; }
+  .branch-toggle, .zoom-controls, .pdf-export-button, .header-actions, .detail-backdrop, .export-message { display:none !important; }
+  .person-node { cursor:default !important; transition:none !important; filter:none !important; }
+  .person-node:hover, .person-node:focus-visible { transform:none !important; filter:none !important; }
+  .person-label { backdrop-filter:none !important; -webkit-backdrop-filter:none !important; box-shadow:0 1px 2px rgba(57,48,31,.08) !important; }
+  .avatar-wrap { isolation:isolate; }
+  .avatar-wrap img {
+    display:block !important;
+    width:100% !important;
+    height:100% !important;
+    border-radius:50% !important;
+    clip-path:circle(50% at 50% 50%) !important;
+    -webkit-clip-path:circle(50% at 50% 50%) !important;
+    object-fit:cover !important;
+    background:transparent !important;
+  }
+  .memorial ha-icon { display:none !important; }
+  .memorial .print-candle-icon { width:21px; height:21px; display:grid; place-items:center; color:#fff9dc; filter:drop-shadow(0 1px 1px rgba(89,39,0,.45)); }
+  .memorial .print-candle-icon .print-mdi-svg { width:21px !important; height:21px !important; display:block; fill:currentColor; }
+  .print-icon-fallback { display:block; width:65%; height:65%; border-radius:50%; background:currentColor; opacity:.45; }
+  .connectors { shape-rendering:geometricPrecision; text-rendering:geometricPrecision; }
+  .decorative-scene { filter:none !important; }
+  @media screen {
+    body { background:#d7d7d7; padding:20px; }
+    .print-sheet { margin:0 auto; box-shadow:0 4px 30px rgba(0,0,0,.22); }
+  }
+  @media print {
+    html, body { width:${pageWidthMm}mm; height:${pageHeightMm}mm; overflow:hidden; }
+    .print-sheet { box-shadow:none; }
+  }
+</style>
+</head>
+<body>
+  <main class="print-sheet">
+    <header class="print-heading">
+      <h1>${escapeHtml(title)}</h1>
+      ${config.subtitle ? `<p>${escapeHtml(config.subtitle)}</p>` : ""}
+    </header>
+    ${this._printSummary(stats)}
+    <div class="print-poster-info">Khổ thiết kế: ${pageWidthMm} × ${pageHeightMm} mm · Tỷ lệ cây: ${Math.round(printScale * 100)}% · Nội dung vector</div>
+    <section class="print-tree-viewport">
+      <div class="print-tree-scale">
+        <div class="print-tree">
+          <div class="tree-canvas">
+            ${scene}
+            <svg class="connectors" viewBox="0 0 ${layout.width} ${layout.height}" preserveAspectRatio="none" aria-hidden="true">${layout.paths.join("")}</svg>
+            ${nodes}
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+<script>
+  (() => {
+    const replaceBrokenImage = (img) => {
+      const fallback = img.dataset.fallbackSrc;
+      if (fallback && img.src !== fallback) { img.src = fallback; return; }
+      const text = img.dataset.fallback || '?';
+      const div = document.createElement('div');
+      div.className = img.dataset.fallbackClass || 'avatar-placeholder';
+      div.textContent = text;
+      img.replaceWith(div);
+    };
+    document.querySelectorAll('img').forEach((img) => img.addEventListener('error', () => replaceBrokenImage(img), {once:true}));
+    const waitForImages = () => Promise.all(Array.from(document.images).map((img) => {
+      if (img.complete) return img.decode?.().catch(() => {}) || Promise.resolve();
+      return new Promise((resolve) => {
+        img.addEventListener('load', () => { (img.decode?.().catch(() => {}) || Promise.resolve()).then(resolve); }, {once:true});
+        img.addEventListener('error', resolve, {once:true});
+      });
+    }));
+    const waitForFonts = document.fonts?.ready || Promise.resolve();
+    Promise.all([waitForImages(), waitForFonts]).then(() => setTimeout(() => window.print(), 500));
+  })();
+<\/script>
+</body>
+</html>`);
+    printWindow.document.close();
+  }
+
+  _showExportMessage(message, isError = false) {
+    const existing = this.shadowRoot?.querySelector(".export-message");
+    existing?.remove();
+    const card = this.shadowRoot?.querySelector(".family-card");
+    if (!card) return;
+    card.insertAdjacentHTML("afterbegin", `<div class="export-message${isError ? " error" : ""}">${escapeHtml(message)}</div>`);
+    window.setTimeout(() => this.shadowRoot?.querySelector(".export-message")?.remove(), 5000);
+  }
+
   _formatDates(person) {
     const birth = formatPersonDate(person, "birth");
     const death = formatPersonDate(person, "death");
@@ -1761,10 +2076,9 @@ class CayGiaPhaCard extends HTMLElement {
       .family-heading p { margin:7px 0 0; color:var(--family-muted); font-size:var(--family-subtitle-size); letter-spacing:0; }
       .corner-ornament { width:74px; height:70px; fill:none; stroke:var(--family-decoration); stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; opacity:.78; }
       .ornament-right { justify-self:end; }
+      .header-actions { position:absolute; top:12px; right:14px; z-index:5; display:flex; align-items:center; gap:8px; }
       .zoom-controls {
-        position:absolute;
-        top:14px;
-        right:14px;
+        position:static;
         z-index:8;
         display:flex;
         border:1px solid color-mix(in srgb, var(--family-border) 78%, transparent);
@@ -1779,9 +2093,15 @@ class CayGiaPhaCard extends HTMLElement {
       .zoom-controls button:hover { background:rgba(0,0,0,.045); }
       .zoom-controls ha-icon { --mdc-icon-size:18px; }
       .zoom-controls span { font-size:10px; min-width:34px; }
+      .pdf-export-button { height:34px; padding:0 11px; display:flex; align-items:center; gap:6px; border:1px solid color-mix(in srgb, var(--family-border) 72%, transparent); border-radius:10px; background:color-mix(in srgb, var(--family-bg) 92%, white); color:var(--family-text); cursor:pointer; box-shadow:0 2px 8px rgba(0,0,0,.07); font:600 12px/1 var(--family-content-font); }
+      .pdf-export-button:hover { background:color-mix(in srgb, var(--family-decoration) 10%, var(--family-bg)); }
+      .pdf-export-button ha-icon { --mdc-icon-size:19px; color:#b3261e; }
+      .export-message { position:absolute; top:10px; left:50%; transform:translateX(-50%); z-index:20; max-width:min(90%,560px); padding:10px 14px; border-radius:10px; background:#e8f5e9; color:#1b5e20; box-shadow:0 3px 15px rgba(0,0,0,.16); font:600 13px/1.4 var(--family-content-font); }
+      .export-message.error { background:#ffebee; color:#b71c1c; }
       .summary { position:relative; z-index:3; display:grid; grid-template-columns:repeat(6,minmax(80px,1fr)); gap:7px; padding:4px 22px 12px; }
       .summary-item { display:grid; grid-template-columns:auto 1fr auto; align-items:center; gap:6px; padding:7px 9px; border:1px solid color-mix(in srgb, var(--family-border) 70%, transparent); border-radius:999px; background:rgba(255,255,255,.7); }
       .summary-item ha-icon { --mdc-icon-size:16px; opacity:.62; }
+      .print-icon-cache { position:absolute !important; width:1px !important; height:1px !important; overflow:hidden !important; opacity:0 !important; pointer-events:none !important; left:-9999px !important; top:-9999px !important; }
       .summary-item span { color:var(--family-muted); font-size:10px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
       .summary-item strong { font-size:13px; }
       .family-content { position:relative; min-height:280px; }
@@ -1922,7 +2242,10 @@ class CayGiaPhaCard extends HTMLElement {
         .family-heading h1 { font-size:min(var(--family-title-size), 36px); }
         .family-heading p { font-size:12px; }
         .summary { grid-template-columns:repeat(3,1fr); padding-inline:12px; }
-        .zoom-controls { top:auto; bottom:7px; right:10px; }
+        .header-actions { top:auto; right:10px; bottom:7px; }
+        .zoom-controls { position:static; }
+        .pdf-export-button span { display:none; }
+        .pdf-export-button { width:34px; padding:0; justify-content:center; }
       }
       @media (max-width:520px) {
         .family-card { border-radius:calc(var(--family-radius) * .72); }
