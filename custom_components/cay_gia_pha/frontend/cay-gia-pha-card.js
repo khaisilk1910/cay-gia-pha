@@ -81,6 +81,7 @@ class CayGiaPhaCard extends HTMLElement {
     this._zoom = DEFAULT_CONFIG.initial_zoom / 100;
     this._needsInitialCenter = true;
     this._pendingViewport = null;
+    this._fitTreeAfterRender = false;
     this._collapsedFamilies = new Set();
     this._initialGenerationApplied = false;
     this._suppressPersonClickUntil = 0;
@@ -338,6 +339,11 @@ class CayGiaPhaCard extends HTMLElement {
       requestAnimationFrame(() => {
         if (!scroller.isConnected) return;
         const stage = scroller.querySelector(".scaled-stage");
+        if (this._fitTreeAfterRender && layout) {
+          this._fitTreeAfterRender = false;
+          this._fitTreeToViewport(scroller, layout);
+          return;
+        }
         if (pendingViewport?.mode === "focal" && stage) {
           this._needsInitialCenter = false;
           scroller.scrollLeft = Math.max(
@@ -397,6 +403,14 @@ class CayGiaPhaCard extends HTMLElement {
     if (exportButton) {
       event.preventDefault();
       this._exportTreeToPdf();
+      return;
+    }
+
+    const fitTreeButton = target.closest("[data-fit-tree]");
+    if (fitTreeButton) {
+      event.preventDefault();
+      event.stopPropagation();
+      this._expandAllAndFit();
       return;
     }
 
@@ -530,12 +544,43 @@ class CayGiaPhaCard extends HTMLElement {
     }, { passive: false });
   }
 
+  _expandAllAndFit() {
+    // Mark the automatic generation limit as already handled so opening every
+    // branch is not immediately undone by _applyInitialGenerationCollapse().
+    this._initialGenerationApplied = true;
+    this._collapsedFamilies.clear();
+    this._layoutDirty = true;
+    this._fitTreeAfterRender = true;
+    this._needsInitialCenter = false;
+    this._pendingViewport = null;
+    this._render();
+  }
+
+  _fitTreeToViewport(scroller, layout) {
+    if (!scroller?.isConnected || !layout?.width || !layout?.height) return;
+
+    const rect = scroller.getBoundingClientRect();
+    const viewportHeight = Math.max(320, window.visualViewport?.height || window.innerHeight || 0);
+    const availableWidth = Math.max(160, scroller.clientWidth - 24);
+    const availableHeight = Math.max(220, viewportHeight - Math.max(0, rect.top) - 24);
+    const widthZoom = availableWidth / layout.width;
+    const heightZoom = availableHeight / layout.height;
+    const fitZoom = clampNumber(Math.min(widthZoom, heightZoom, 1), 0.01, 1.6, this._initialZoom());
+
+    this._setZoom(fitZoom, scroller, null, null, true);
+    requestAnimationFrame(() => {
+      if (!scroller.isConnected) return;
+      scroller.scrollLeft = Math.max(0, (scroller.scrollWidth - scroller.clientWidth) / 2);
+      scroller.scrollTop = Math.max(0, (scroller.scrollHeight - scroller.clientHeight) / 2);
+    });
+  }
+
   _initialZoom() {
     return clampNumber(this._config?.initial_zoom, 50, 160, 50) / 100;
   }
 
   _setZoom(nextZoom, scroller = null, clientX = null, clientY = null, center = false) {
-    const zoom = clampNumber(nextZoom, 0.5, 1.6, this._initialZoom());
+    const zoom = clampNumber(nextZoom, 0.01, 1.6, this._initialZoom());
     const activeScroller = scroller || this.shadowRoot.querySelector(".tree-scroll");
     if (Math.abs(zoom - this._zoom) < 0.001) {
       if (center && activeScroller) {
@@ -684,7 +729,7 @@ class CayGiaPhaCard extends HTMLElement {
       return `<div class="message empty"><ha-icon icon="mdi:account-plus-outline"></ha-icon><span>Chưa có cá thể trong cây gia phả.</span></div>`;
     }
 
-    const zoom = clampNumber(this._zoom, 0.5, 1.6, this._initialZoom());
+    const zoom = clampNumber(this._zoom, 0.01, 1.6, this._initialZoom());
     const scene = this._config.show_decorations
       ? this._decorativeScene(layout.width, layout.height)
       : "";
@@ -1654,7 +1699,8 @@ class CayGiaPhaCard extends HTMLElement {
 
   _zoomControls() {
     return `
-      <div class="zoom-controls" aria-label="Thu phóng">
+      <div class="zoom-controls" aria-label="Thu phóng và căn cây">
+        <button class="fit-tree-button" data-fit-tree title="Hiện tất cả nhánh và căn vừa toàn bộ cây" aria-label="Hiện tất cả nhánh và căn vừa toàn bộ cây"><ha-icon icon="mdi:fit-to-screen-outline"></ha-icon></button>
         <button data-zoom="out" title="Thu nhỏ"><ha-icon icon="mdi:magnify-minus-outline"></ha-icon></button>
         <button data-zoom="reset" title="Về mức mặc định ${Math.round(this._initialZoom() * 100)}%"><span>${Math.round(this._zoom * 100)}%</span></button>
         <button data-zoom="in" title="Phóng to"><ha-icon icon="mdi:magnify-plus-outline"></ha-icon></button>
@@ -1871,7 +1917,7 @@ class CayGiaPhaCard extends HTMLElement {
   .print-tree-scale { position:absolute; left:50%; top:0; width:${layout.width}px; height:${layout.height}px; transform:translateX(-50%) scale(${printScale}); transform-origin:top center; }
   .print-tree { position:relative; width:${layout.width}px; height:${layout.height}px; }
   .tree-canvas { position:relative !important; inset:auto !important; transform:none !important; width:${layout.width}px !important; height:${layout.height}px !important; --branch-size:16px; --branch-border:1px; --branch-icon:10px; --branch-shadow-y:0px; --branch-shadow-blur:0px; }
-  .branch-toggle, .zoom-controls, .pdf-export-button, .header-actions, .detail-backdrop, .export-message { display:none !important; }
+  .branch-toggle, .zoom-controls, .fit-tree-button, .pdf-export-button, .header-actions, .detail-backdrop, .export-message { display:none !important; }
   .person-node { cursor:default !important; transition:none !important; filter:none !important; }
   .person-node:hover, .person-node:focus-visible { transform:none !important; filter:none !important; }
   .person-label { backdrop-filter:none !important; -webkit-backdrop-filter:none !important; box-shadow:0 1px 2px rgba(57,48,31,.08) !important; }
