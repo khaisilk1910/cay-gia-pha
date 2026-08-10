@@ -1039,7 +1039,9 @@ class CayGiaPhaCard extends HTMLElement {
     const coupleGap = Math.max(26, Math.round(hGap * 0.8));
     const familyGap = Math.max(58, Math.round(hGap * 2));
     const labelTop = avatarSize + 8;
-    const labelHeight = this._config.show_dates ? (this._config.show_age ? 78 : 66) : 54;
+    const labelHeight = this._config.show_dates && this._config.show_age
+      ? 78
+      : (this._config.show_dates || this._config.show_age ? 66 : 54);
     const nodeHeight = labelTop + labelHeight;
     const marginX = 54;
     const marginTop = 24;
@@ -1556,6 +1558,7 @@ class CayGiaPhaCard extends HTMLElement {
       : `<img src="${escapeAttr(defaultAvatar)}" alt="Ảnh đại diện mặc định của ${escapeAttr(person.full_name)}" loading="lazy" draggable="false" data-fallback="${escapeAttr(initials(person.full_name))}" data-fallback-class="avatar-placeholder" />`;
     const role = this._personRole(person);
     const dates = this._formatDates(person);
+    const ageText = this._config.show_age ? calculateAgeText(person) : "";
 
     return `
       <article
@@ -1569,7 +1572,8 @@ class CayGiaPhaCard extends HTMLElement {
         <div class="person-label">
           ${personNameMarkup(person.full_name || "Không rõ tên")}
           <span>${escapeHtml(role)}</span>
-          ${this._config.show_dates && dates ? `<small>${escapeHtml(dates)}</small>` : ""}
+          ${this._config.show_dates && dates ? `<small class="person-dates">${escapeHtml(dates)}</small>` : ""}
+          ${ageText ? `<small class="person-age">${escapeHtml(ageText)}</small>` : ""}
         </div>
         <div class="avatar-wrap">
           ${image}
@@ -2008,12 +2012,10 @@ class CayGiaPhaCard extends HTMLElement {
   _formatDates(person) {
     const birth = formatPersonDate(person, "birth");
     const death = formatPersonDate(person, "death");
-    const age = this._config.show_age ? calculateAgeText(person) : "";
     if (person.is_deceased) {
-      const range = birth || death ? `${birth || "?"} – ${death || "?"}` : "";
-      return [range, age].filter(Boolean).join(" · ");
+      return birth || death ? `${birth || "?"} – ${death || "?"}` : "";
     }
-    return [birth ? `Sinh ${birth}` : "", age].filter(Boolean).join(" · ");
+    return birth ? `Sinh ${birth}` : "";
   }
 
   _cornerOrnament(side) {
@@ -2710,7 +2712,8 @@ function formatPersonDate(person, prefix) {
 
 function calculateAgeText(person) {
   const age = calculateAge(person);
-  return age === null ? "Không rõ" : `${age} tuổi`;
+  if (age === null) return "";
+  return person?.is_deceased ? `Thọ ${age} tuổi` : `${age} tuổi`;
 }
 
 function calculateAge(person) {
