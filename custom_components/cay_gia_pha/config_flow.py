@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
+import logging
+import sqlite3
 from typing import Any
 from uuid import uuid4
 
@@ -13,21 +15,7 @@ from homeassistant.components.http.auth import async_sign_path
 from homeassistant.core import callback
 from homeassistant.helpers import selector
 
-try:
-    from homeassistant.config_entries import ConfigFlowResult
-except ImportError:  # Home Assistant versions before ConfigFlowResult was exported.
-    ConfigFlowResult = dict  # type: ignore[misc, assignment]
-
-try:
-    from homeassistant.config_entries import ConfigSubentryFlow
-except ImportError:  # Config subentries require Home Assistant 2025.3 or newer.
-    _SUBENTRIES_SUPPORTED = False
-
-    class ConfigSubentryFlow:  # type: ignore[no-redef]
-        """Import-safe placeholder; never registered on unsupported versions."""
-
-else:
-    _SUBENTRIES_SUPPORTED = True
+from homeassistant.config_entries import ConfigFlowResult, ConfigSubentryFlow
 
 from .const import (
     CONF_BIRTH_DATE,
@@ -84,6 +72,8 @@ from .date_utils import (
     normalize_partial_date,
     partial_date_to_string,
 )
+_LOGGER = logging.getLogger(__name__)
+
 _PERSON_DATA_KEYS = {
     CONF_PERSON_ID,
     CONF_FULL_NAME,
@@ -128,15 +118,16 @@ class CayGiaPhaConfigFlow(ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Create the tree and, for a new database, its root person."""
-        if not _SUBENTRIES_SUPPORTED:
-            return self.async_abort(reason="unsupported_home_assistant_version")
-
         if self._async_current_entries():
             return self.async_abort(reason="single_instance_allowed")
 
         from .storage import FamilyTreeStore
 
-        existing_people = await FamilyTreeStore.async_load_existing_people(self.hass)
+        try:
+            existing_people = await FamilyTreeStore.async_load_existing_people(self.hass)
+        except (sqlite3.Error, OSError, ValueError):
+            _LOGGER.exception("Cannot load existing family tree for config flow")
+            return self.async_abort(reason="database_unavailable")
         errors: dict[str, str] = {}
         root_prepared: dict[str, Any] | None = None
 
@@ -187,8 +178,6 @@ class CayGiaPhaConfigFlow(ConfigFlow, domain=DOMAIN):
         cls, config_entry: ConfigEntry
     ) -> dict[str, type[ConfigSubentryFlow]]:
         """Return supported config subentry types."""
-        if not _SUBENTRIES_SUPPORTED:
-            return {}
         return {SUBENTRY_TYPE_PERSON: PersonSubentryFlow}
 
 

@@ -2,18 +2,19 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-import hashlib
-import os
+import asyncio
+from dataclasses import dataclass, field
+import logging
+import sqlite3
+from time import monotonic
 from typing import TYPE_CHECKING, Any
 
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import ConfigEntry, ConfigEntryError, ConfigEntryNotReady
 from homeassistant.core import HomeAssistant
 from homeassistant.loader import async_get_integration
 
 from .const import (
     DOMAIN,
-    FRONTEND_CARD_FILENAME,
     FRONTEND_MODULE_URL,
     PLATFORMS,
     RUNTIME_SETUP_DONE,
@@ -23,63 +24,84 @@ if TYPE_CHECKING:
     from .coordinator import FamilyTreeCoordinator
     from .storage import FamilyTreeStore
 
+_LOGGER = logging.getLogger(__name__)
+
 
 async def _async_register_lovelace_resource(
     hass: HomeAssistant, url: str, version: str
-) -> bool:
-    """Register or update one Lovelace module with deterministic cache busting.
+) -> None:
+    """Install exactly one card module, without holding up entry setup.
 
-    This follows the same strategy used by Shopping History: prefer Lovelace's
-    resource storage, update an existing URL in place, and only fall back to
-    ``add_extra_js_url`` when resource storage is unavailable. Registering by one
-    route avoids loading the same custom element twice.
+    On dashboards with YAML-only resources, use the supported frontend module
+    registry instead of trying to edit read-only YAML. Do not use the mutable
+    resource API until it is fully loaded (HA 2026.11).
     """
     from homeassistant.components.frontend import add_extra_js_url
 
     versioned_url = f"{url}?v={version}"
     lovelace = hass.data.get("lovelace")
-    if not lovelace:
-        add_extra_js_url(hass, versioned_url)
-        return False
-
-    resources = getattr(lovelace, "resources", None)
-    if resources is None and hasattr(lovelace, "get"):
+    resources = (
+        getattr(lovelace, "resources", None) if lovelace is not None else None
+    )
+    if resources is None and isinstance(lovelace, dict):
         resources = lovelace.get("resources")
-
-    if not resources or not hasattr(resources, "async_items"):
+    if resources is None or not hasattr(resources, "async_items"):
         add_extra_js_url(hass, versioned_url)
-        return False
+        _LOGGER.debug("Lovelace resources unavailable; card registered as frontend module")
+        return
 
     if hasattr(resources, "async_get_info"):
         await resources.async_get_info()
-    elif hasattr(resources, "async_load") and not getattr(resources, "loaded", True):
+    elif hasattr(resources, "async_load") and not getattr(resources, "loaded", False):
         await resources.async_load()
 
-    for item in resources.async_items():
-        item_url = item.get("url", "")
-        if item_url.split("?", 1)[0] != url:
-            continue
-        if item_url != versioned_url:
-            await resources.async_update_item(
-                item["id"], {"res_type": "module", "url": versioned_url}
+    matches = [
+        item for item in resources.async_items()
+        if str(item.get("url", "")).split("?", 1)[0] == url
+    ]
+    # ResourceYAMLCollection is read-only; never call its non-existent writer.
+    if not hasattr(resources, "async_create_item") or not hasattr(
+        resources, "async_update_item"
+    ):
+        if not matches:
+            add_extra_js_url(hass, versioned_url)
+            _LOGGER.debug("Read-only Lovelace resources; using frontend module")
+        elif all(item.get("url") != versioned_url for item in matches):
+            _LOGGER.warning(
+                "Cây Gia Phả card is configured via YAML with an older URL; "
+                "update the dashboard resource to %s to refresh browser cache",
+                versioned_url,
             )
-        return True
+        return
 
-    await resources.async_create_item(
-        {"res_type": "module", "url": versioned_url}
-    )
-    return True
+    # Preserve the first existing resource so users keep its identity.
+    if matches:
+        if matches[0].get("url") != versioned_url or matches[0].get("type") != "module":
+            await resources.async_update_item(
+                matches[0]["id"], {"res_type": "module", "url": versioned_url}
+            )
+        if len(matches) > 1:
+            _LOGGER.warning(
+                "Multiple Cây Gia Phả Lovelace resources found (%d); remove duplicates in dashboard resources",
+                len(matches),
+            )
+    else:
+        await resources.async_create_item({"res_type": "module", "url": versioned_url})
+    _LOGGER.debug("Lovelace card resource ready: %s", versioned_url)
 
 
-def _frontend_file_version(file_path: str, fallback: str) -> str:
-    """Build a cache key from integration version and actual JS file content."""
+async def _async_setup_card_resource(hass: HomeAssistant) -> None:
+    """Register frontend card as optional background work after core is ready."""
     try:
-        stat = os.stat(file_path)
-        with open(file_path, "rb") as file_obj:
-            digest = hashlib.sha256(file_obj.read()).hexdigest()[:12]
-        return f"{fallback}-{int(stat.st_mtime)}-{stat.st_size}-{digest}"
-    except OSError:
-        return fallback
+        integration = await async_get_integration(hass, DOMAIN)
+        await _async_register_lovelace_resource(
+            hass, FRONTEND_MODULE_URL, integration.version or "0"
+        )
+    except Exception:  # A card issue must never prevent backend integration setup.
+        _LOGGER.exception(
+            "Cannot automatically register Lovelace card; add %s as a module resource manually",
+            FRONTEND_MODULE_URL,
+        )
 
 
 @dataclass(slots=True)
@@ -88,6 +110,7 @@ class FamilyTreeRuntimeData:
 
     store: FamilyTreeStore
     coordinator: FamilyTreeCoordinator
+    update_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
 async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
@@ -131,33 +154,47 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry[FamilyTreeRuntimeData]
 ) -> bool:
     """Set up Cây Gia Phả from a config entry."""
-    integration = await async_get_integration(hass, DOMAIN)
-    fallback_version = integration.version if integration.version else "0"
-    frontend_file = hass.config.path(
-        "custom_components", DOMAIN, "frontend", FRONTEND_CARD_FILENAME
-    )
-    frontend_version = await hass.async_add_executor_job(
-        _frontend_file_version, frontend_file, fallback_version
-    )
-    await _async_register_lovelace_resource(
-        hass, FRONTEND_MODULE_URL, frontend_version
-    )
+    started_at = monotonic()
 
     from .coordinator import FamilyTreeCoordinator
     from .image_utils import async_delete_images
     from .storage import FamilyTreeStore
 
     store = FamilyTreeStore(hass)
-    await store.async_initialize()
-    removed_images = await store.async_sync_subentries(entry.subentries.values())
-    await async_delete_images(hass, removed_images)
+    try:
+        await store.async_initialize()
+        removed_images = await store.async_sync_subentries(
+            entry.subentries.values(), preserve_existing_if_empty=True
+        )
+        await async_delete_images(hass, removed_images)
 
-    coordinator = FamilyTreeCoordinator(hass, store, entry)
-    await coordinator.async_config_entry_first_refresh()
+        coordinator = FamilyTreeCoordinator(hass, store, entry)
+        await coordinator.async_config_entry_first_refresh()
+    except sqlite3.OperationalError as err:
+        _LOGGER.warning("SQLite temporarily unavailable for tree %s: %s", entry.entry_id, err)
+        raise ConfigEntryNotReady("Cây Gia Phả SQLite is temporarily unavailable") from err
+    except (sqlite3.DatabaseError, OSError, ValueError) as err:
+        _LOGGER.exception("Unable to initialize family tree database for %s", entry.entry_id)
+        raise ConfigEntryError("Cây Gia Phả cannot read the family database; restore from backup if needed") from err
 
     entry.runtime_data = FamilyTreeRuntimeData(store=store, coordinator=coordinator)
     entry.async_on_unload(entry.add_update_listener(_async_entry_updated))
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    # The card only enriches the UI: its registration must not hold up the
+    # integration's state sensors, and any Lovelace failure is logged separately.
+    entry.async_create_background_task(
+        hass,
+        _async_setup_card_resource(hass),
+        f"{DOMAIN} Lovelace card resource",
+    )
+    _LOGGER.info(
+        "Family tree ready: entry_id=%s people=%d revision=%s elapsed=%.3fs",
+        entry.entry_id,
+        len(coordinator.data.get("people", [])),
+        coordinator.data.get("revision", 0),
+        monotonic() - started_at,
+    )
     return True
 
 
@@ -168,9 +205,21 @@ async def _async_entry_updated(
     from .image_utils import async_delete_images
 
     runtime = entry.runtime_data
-    removed_images = await runtime.store.async_sync_subentries(entry.subentries.values())
-    await async_delete_images(hass, removed_images)
-    await runtime.coordinator.async_request_refresh()
+    async with runtime.update_lock:
+        try:
+            removed_images = await runtime.store.async_sync_subentries(entry.subentries.values())
+            # Preserve the data update even if a superseded image cannot be deleted.
+            await runtime.coordinator.async_request_refresh()
+        except (sqlite3.Error, OSError, ValueError):
+            _LOGGER.exception("Failed to synchronize people for tree %s", entry.entry_id)
+            raise
+        await async_delete_images(hass, removed_images)
+        _LOGGER.debug(
+            "Family tree synchronized: entry_id=%s people=%d revision=%s",
+            entry.entry_id,
+            len(runtime.coordinator.data.get("people", [])),
+            runtime.coordinator.data.get("revision", 0),
+        )
 
 
 async def async_unload_entry(

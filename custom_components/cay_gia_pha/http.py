@@ -9,7 +9,7 @@ from aiohttp import web
 
 from homeassistant.components.http import KEY_HASS, HomeAssistantView
 
-from .const import IMAGE_API_URL, UPLOAD_PREVIEW_API_URL
+from .const import DOMAIN, IMAGE_API_URL, UPLOAD_PREVIEW_API_URL
 from .image_utils import resolve_image_path
 
 
@@ -29,7 +29,11 @@ class FamilyTreeImageView(HomeAssistantView):
         """Return one stored image."""
         hass = request.app[KEY_HASS]
         entry = hass.config_entries.async_get_entry(entry_id)
-        runtime = getattr(entry, "runtime_data", None) if entry is not None else None
+        runtime = (
+            getattr(entry, "runtime_data", None)
+            if entry is not None and entry.domain == DOMAIN
+            else None
+        )
         if runtime is None:
             raise web.HTTPNotFound
 
@@ -64,8 +68,8 @@ class FamilyTreeUploadPreviewView(HomeAssistantView):
     ) -> web.StreamResponse:
         """Return an uploaded image without consuming it."""
         hass = request.app[KEY_HASS]
-        path = _uploaded_file_path(hass, file_id)
-        if path is None or not path.is_file():
+        path = await hass.async_add_executor_job(_uploaded_file_path, hass, file_id)
+        if path is None:
             raise web.HTTPNotFound
         return web.FileResponse(path)
 
@@ -95,6 +99,7 @@ def _uploaded_file_path(hass: Any, file_id: str) -> Path | None:
         file_path = getattr(upload_data, "file_path", None)
         if not callable(file_path):
             return None
-        return Path(file_path(file_id))
+        path = Path(file_path(file_id))
+        return path if path.is_file() else None
     except (KeyError, OSError, TypeError, ValueError):
         return None

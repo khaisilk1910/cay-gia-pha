@@ -40,7 +40,8 @@
     "abort": {
       "single_instance_allowed": "Chỉ hỗ trợ một cây gia phả trên mỗi Home Assistant.",
       "already_configured": "Cây gia phả đã được cấu hình.",
-      "unsupported_home_assistant_version": "Tích hợp cần Home Assistant 2025.4.0 trở lên vì sử dụng config subentry để quản lý từng cá thể."
+      "unsupported_home_assistant_version": "Tích hợp cần Home Assistant 2025.4.0 trở lên vì sử dụng config subentry để quản lý từng cá thể.",
+      "database_unavailable": "Không thể truy cập cơ sở dữ liệu gia phả. Hãy kiểm tra nhật ký Home Assistant và bản sao lưu trước khi thử lại."
     },
     "error": {
       "required": "Trường này là bắt buộc.",

@@ -14,6 +14,7 @@ from .const import (
     CONF_IMAGE_PATH,
     CONF_PERSON_ID,
     CONF_TREE_NAME,
+    DOMAIN,
     IMAGE_API_URL,
     WS_TYPE_GET_TREE,
 )
@@ -39,12 +40,19 @@ async def websocket_get_tree(
 ) -> None:
     """Return tree data with temporary signed image URLs."""
     entry = hass.config_entries.async_get_entry(msg["entry_id"])
-    runtime = getattr(entry, "runtime_data", None) if entry is not None else None
+    runtime = (
+        getattr(entry, "runtime_data", None)
+        if entry is not None and entry.domain == DOMAIN
+        else None
+    )
     if runtime is None:
         connection.send_error(msg["id"], "not_found", "Family tree is not loaded")
         return
 
     snapshot = runtime.coordinator.data
+    if not snapshot:
+        connection.send_error(msg["id"], "not_ready", "Family tree data is not ready")
+        return
     people = []
     for stored_person in snapshot.get("people", []):
         person = dict(stored_person)

@@ -40,7 +40,8 @@
     "abort": {
       "single_instance_allowed": "Only one family tree is supported per Home Assistant instance.",
       "already_configured": "The family tree is already configured.",
-      "unsupported_home_assistant_version": "This integration requires Home Assistant 2025.4.0 or newer because it uses config subentries."
+      "unsupported_home_assistant_version": "This integration requires Home Assistant 2025.4.0 or newer because it uses config subentries.",
+      "database_unavailable": "Cannot access the existing family tree database. Check Home Assistant logs and restore your backup if necessary."
     },
     "error": {
       "required": "This field is required.",

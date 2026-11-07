@@ -12,8 +12,8 @@ const FAMILY_TREE_CACHE = new Map();
 let CARD_STYLES_CACHE = null;
 
 const DEFAULT_CONFIG = {
-  title: "Gia Phả Cụ Tiến Tiệp",
-  subtitle: "Theo dấu các thế hệ trong gia đình qua năm tháng.",
+  title: "",
+  subtitle: "",
   title_font: "noto-serif",
   content_font: "noto-sans",
   title_font_size: 46,
@@ -90,6 +90,10 @@ class CayGiaPhaCard extends HTMLElement {
     this._wheelZoomPoint = null;
     this._imageRefreshTimer = null;
     this._resizeTimer = null;
+    this._retryTimer = null;
+    this._retryAfter = 0;
+    this._retryAttempts = 0;
+    this._lastFailedRequestKey = null;
     this._observedWidth = 0;
     this._normalizedTree = null;
     this._normalizedPeople = [];
@@ -129,6 +133,8 @@ class CayGiaPhaCard extends HTMLElement {
     clearTimeout(this._resizeTimer);
     if (this._wheelZoomFrame) cancelAnimationFrame(this._wheelZoomFrame);
     if (this._imageRefreshTimer) clearTimeout(this._imageRefreshTimer);
+    if (this._retryTimer) clearTimeout(this._retryTimer);
+    this._retryTimer = null;
   }
 
   static getStubConfig() {
@@ -146,13 +152,15 @@ class CayGiaPhaCard extends HTMLElement {
   getGridOptions() {
     return {
       columns: 12,
+      rows: 8,
       min_columns: 6,
+      max_columns: 12,
       min_rows: 5,
     };
   }
 
   setConfig(config) {
-    if (!config || typeof config !== "object") {
+    if (!config || typeof config !== "object" || Array.isArray(config)) {
       throw new Error("Cấu hình thẻ Cây Gia Phả không hợp lệ");
     }
     const nextConfig = { ...DEFAULT_CONFIG, ...config };
@@ -160,6 +168,9 @@ class CayGiaPhaCard extends HTMLElement {
 
     this._config = nextConfig;
     this._error = null;
+    this._retryAfter = 0;
+    this._retryAttempts = 0;
+    this._lastFailedRequestKey = null;
     this._zoom = this._initialZoom();
     this._needsInitialCenter = true;
     this._collapsedFamilies.clear();
@@ -225,6 +236,11 @@ class CayGiaPhaCard extends HTMLElement {
 
     const requestKey = `${entryId}:${revision}`;
     if (this._loadingKey || this._requestKey === requestKey) return;
+    if (this._lastFailedRequestKey !== requestKey) {
+      this._retryAfter = 0;
+      this._retryAttempts = 0;
+    }
+    if (Date.now() < this._retryAfter) return;
 
     this._loadingKey = requestKey;
     this._loading = !this._tree;
@@ -238,6 +254,14 @@ class CayGiaPhaCard extends HTMLElement {
         : null;
       if (currentKey !== requestKey) return;
 
+      if (!tree || !Array.isArray(tree.people) || typeof tree.stats !== "object") {
+        throw new Error("Dữ liệu gia phả trả về không hợp lệ.");
+      }
+      this._retryAfter = 0;
+      this._retryAttempts = 0;
+      this._lastFailedRequestKey = null;
+      if (this._retryTimer) clearTimeout(this._retryTimer);
+      this._retryTimer = null;
       this._tree = tree;
       this._requestKey = requestKey;
       this._treeLoadedAt = Date.now();
@@ -251,6 +275,16 @@ class CayGiaPhaCard extends HTMLElement {
       }
     } catch (error) {
       this._error = error?.message || String(error);
+      this._lastFailedRequestKey = requestKey;
+      this._retryAttempts = Math.min(this._retryAttempts + 1, 6);
+      const delay = Math.min(60_000, 1000 * (2 ** (this._retryAttempts - 1)));
+      this._retryAfter = Date.now() + delay;
+      if (this._retryTimer) clearTimeout(this._retryTimer);
+      this._retryTimer = setTimeout(() => {
+        this._retryTimer = null;
+        if (this.isConnected) this._maybeLoadTree();
+      }, delay);
+      console.warn("Cây Gia Phả: không lấy được dữ liệu cây", { entryId, revision, error });
     } finally {
       if (this._loadingKey === requestKey) this._loadingKey = null;
       this._loading = false;
@@ -430,6 +464,27 @@ class CayGiaPhaCard extends HTMLElement {
   }
 
   _handleShadowKeydown(event) {
+    if (event.key === "Escape" && this._selectedPersonId) {
+      event.preventDefault();
+      this._setSelectedPerson(null);
+      return;
+    }
+    if (event.key === "Tab" && this._selectedPersonId) {
+      const dialog = this.shadowRoot?.querySelector('.detail-panel');
+      const focusable = [...(dialog?.querySelectorAll('button:not([disabled]), [tabindex="0"]') || [])];
+      if (focusable.length) {
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (event.shiftKey && (this.shadowRoot.activeElement === first || !dialog.contains(this.shadowRoot.activeElement))) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && (this.shadowRoot.activeElement === last || !dialog.contains(this.shadowRoot.activeElement))) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
+      return;
+    }
     if (event.key !== "Enter" && event.key !== " ") return;
     const target = event.target;
     if (!(target instanceof Element)) return;
@@ -440,8 +495,20 @@ class CayGiaPhaCard extends HTMLElement {
   }
 
   _setSelectedPerson(personId) {
+    const previouslySelected = this._selectedPersonId;
     this._selectedPersonId = personId ? String(personId) : null;
     this._renderDetailPanel();
+    if (this._selectedPersonId) {
+      this.shadowRoot?.querySelector('.detail-close')?.focus();
+    } else if (previouslySelected) {
+      const nodes = this.shadowRoot?.querySelectorAll('.person-node') || [];
+      for (const node of nodes) {
+        if (node.dataset.personId === previouslySelected) {
+          node.focus();
+          break;
+        }
+      }
+    }
   }
 
   _renderDetailPanel() {
@@ -2806,145 +2873,6 @@ function escapeAttr(value) {
   return escapeHtml(value).replaceAll("`", "&#096;");
 }
 
-function installFamilyTreeImagePreviewEnhancer() {
-  customElements.whenDefined("ha-selector-file").then(() => {
-    const FileSelector = customElements.get("ha-selector-file");
-    if (!FileSelector || FileSelector.prototype.__cgpImagePreviewEnhanced) return;
-
-    Object.defineProperty(FileSelector.prototype, "__cgpImagePreviewEnhanced", {
-      value: true,
-      configurable: false,
-      enumerable: false,
-    });
-
-    const originalConnected = FileSelector.prototype.connectedCallback;
-    const originalDisconnected = FileSelector.prototype.disconnectedCallback;
-
-    FileSelector.prototype.connectedCallback = function (...args) {
-      originalConnected?.apply(this, args);
-      queueMicrotask(() => setupImagePreview(this));
-    };
-
-    FileSelector.prototype.disconnectedCallback = function (...args) {
-      clearImagePreview(this);
-      this.__cgpPreviewObserver?.disconnect();
-      this.__cgpPreviewObserver = null;
-      originalDisconnected?.apply(this, args);
-    };
-
-    function isFamilyTreeImageField(host) {
-      const accept = String(host.selector?.file?.accept || "").toLowerCase();
-      const label = String(host.label || "").normalize("NFC").toLowerCase();
-      if (!accept.includes("image/")) return false;
-      return (
-        label.includes("ảnh hiển thị") ||
-        label.includes("ảnh đại diện") ||
-        label.includes("display image") ||
-        label.includes("portrait")
-      );
-    }
-
-    function setupImagePreview(host, attempt = 0) {
-      if (!host.isConnected) return;
-      if (!host.shadowRoot) {
-        if (attempt < 12) setTimeout(() => setupImagePreview(host, attempt + 1), 50);
-        return;
-      }
-      if (!isFamilyTreeImageField(host)) {
-        // Do not keep scheduling work for unrelated file selectors across Home
-        // Assistant. Retry only while the selector metadata has not arrived yet.
-        if ((!host.selector || host.label === undefined) && attempt < 12) {
-          setTimeout(() => setupImagePreview(host, attempt + 1), 50);
-        }
-        return;
-      }
-
-      if (!host.__cgpPreviewObserver) {
-        host.__cgpPreviewObserver = new MutationObserver(() => wireImageUploader(host));
-        host.__cgpPreviewObserver.observe(host.shadowRoot, { childList: true, subtree: true });
-      }
-      if (!host.__cgpPreviewValueWired) {
-        host.__cgpPreviewValueWired = true;
-        host.addEventListener("value-changed", (event) => {
-          if (!event.detail?.value) clearImagePreview(host);
-        });
-      }
-      wireImageUploader(host);
-    }
-
-    function wireImageUploader(host) {
-      const uploader = host.shadowRoot?.querySelector("ha-file-upload");
-      if (uploader && !uploader.__cgpPreviewWired) {
-        uploader.__cgpPreviewWired = true;
-        uploader.addEventListener("file-picked", (event) => {
-          const file = event.detail?.files?.[0];
-          if (!(file instanceof File)) return;
-          if (host.__cgpPreviewUrl) URL.revokeObjectURL(host.__cgpPreviewUrl);
-          host.__cgpPreviewUrl = URL.createObjectURL(file);
-          host.__cgpPreviewName = file.name;
-          renderImagePreview(host);
-        });
-        uploader.addEventListener("change", () => {
-          setTimeout(() => {
-            if (!host.value) clearImagePreview(host);
-          }, 0);
-        });
-      }
-      renderImagePreview(host);
-    }
-
-    function renderImagePreview(host) {
-      const root = host.shadowRoot;
-      if (!root) return;
-      let preview = root.querySelector("[data-cgp-image-preview]");
-      if (!host.__cgpPreviewUrl) {
-        preview?.remove();
-        return;
-      }
-      if (!preview) {
-        preview = document.createElement("div");
-        preview.dataset.cgpImagePreview = "";
-        Object.assign(preview.style, {
-          display: "grid",
-          gridTemplateColumns: "72px minmax(0, 1fr)",
-          alignItems: "center",
-          gap: "12px",
-          marginTop: "10px",
-          padding: "10px",
-          border: "1px solid var(--divider-color)",
-          borderRadius: "12px",
-          background: "var(--card-background-color)",
-        });
-        const image = document.createElement("img");
-        image.alt = "Xem trước ảnh đại diện";
-        Object.assign(image.style, {
-          width: "72px",
-          height: "72px",
-          objectFit: "cover",
-          borderRadius: "50%",
-          border: "1px solid var(--divider-color)",
-        });
-        const text = document.createElement("div");
-        text.innerHTML = '<strong style="display:block;font-size:13px">Xem trước ảnh đã chọn</strong><span style="display:block;margin-top:4px;color:var(--secondary-text-color);font-size:12px;overflow-wrap:anywhere"></span>';
-        preview.append(image, text);
-        root.append(preview);
-      }
-      const image = preview.querySelector("img");
-      const filename = preview.querySelector("span");
-      if (image && image.src !== host.__cgpPreviewUrl) image.src = host.__cgpPreviewUrl;
-      const displayName = host.__cgpPreviewName || "Ảnh đại diện";
-      if (filename && filename.textContent !== displayName) filename.textContent = displayName;
-    }
-
-    function clearImagePreview(host) {
-      if (host.__cgpPreviewUrl) URL.revokeObjectURL(host.__cgpPreviewUrl);
-      host.__cgpPreviewUrl = null;
-      host.__cgpPreviewName = null;
-      host.shadowRoot?.querySelector("[data-cgp-image-preview]")?.remove();
-    }
-  }).catch(() => undefined);
-}
-
 if (!customElements.get("cay-gia-pha-card")) {
   customElements.define("cay-gia-pha-card", CayGiaPhaCard);
 }
@@ -2952,7 +2880,6 @@ if (!customElements.get("cay-gia-pha-card-editor")) {
   customElements.define("cay-gia-pha-card-editor", CayGiaPhaCardEditor);
 }
 
-installFamilyTreeImagePreviewEnhancer();
 
 window.customCards = window.customCards || [];
 if (!window.customCards.some((card) => card.type === "cay-gia-pha-card")) {

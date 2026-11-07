@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
+from contextlib import closing
 from datetime import UTC, datetime
 import json
+import logging
 from pathlib import Path
 import sqlite3
+from time import monotonic
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.core import HomeAssistant
@@ -62,6 +65,9 @@ from .date_utils import (
 )
 
 
+_LOGGER = logging.getLogger(__name__)
+
+
 def _utc_now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
 
@@ -76,7 +82,9 @@ class FamilyTreeStore:
 
     async def async_initialize(self) -> None:
         """Create the data directory and migrate the database schema."""
+        started_at = monotonic()
         await self.hass.async_add_executor_job(self._initialize)
+        _LOGGER.debug("SQLite schema ready in %.3fs", monotonic() - started_at)
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.database_path, timeout=5)
@@ -87,7 +95,7 @@ class FamilyTreeStore:
 
     def _initialize(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             journal_mode = str(
                 connection.execute("PRAGMA journal_mode").fetchone()[0]
             ).lower()
@@ -163,6 +171,10 @@ class FamilyTreeStore:
                 """
             )
             if previous_schema_version != DATABASE_SCHEMA_VERSION:
+                _LOGGER.info(
+                    "Family tree SQLite schema migration: %d -> %d",
+                    previous_schema_version, DATABASE_SCHEMA_VERSION,
+                )
                 connection.execute(
                     """
                     INSERT INTO meta(key, value) VALUES('schema_version', ?)
@@ -261,9 +273,14 @@ class FamilyTreeStore:
             )
 
     async def async_sync_subentries(
-        self, subentries: Iterable[ConfigSubentry]
+        self, subentries: Iterable[ConfigSubentry], *, preserve_existing_if_empty: bool = False
     ) -> list[str]:
-        """Mirror person subentries to SQLite and return orphan image paths."""
+        """Mirror person subentries to SQLite and return orphan image paths.
+
+        On initial setup, keep legacy rows if an old entry has no subentries.
+        A user-initiated deletion must still delete them, so preserve only
+        when the caller explicitly requests it at initial startup.
+        """
         serializable = [
             {
                 "subentry_id": subentry.subentry_id,
@@ -273,10 +290,12 @@ class FamilyTreeStore:
             for subentry in subentries
         ]
         return await self.hass.async_add_executor_job(
-            self._sync_subentries, serializable
+            self._sync_subentries, serializable, preserve_existing_if_empty
         )
 
-    def _sync_subentries(self, subentries: list[dict[str, Any]]) -> list[str]:
+    def _sync_subentries(
+        self, subentries: list[dict[str, Any]], preserve_existing_if_empty: bool = False
+    ) -> list[str]:
         now = _utc_now()
         removed_image_paths: list[str] = []
 
@@ -301,11 +320,20 @@ class FamilyTreeStore:
             if (image_path := _nullable_text(item["data"].get(CONF_IMAGE_PATH)))
         }
 
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             existing_rows = {
                 row["person_id"]: row
                 for row in connection.execute("SELECT * FROM persons").fetchall()
             }
+
+            if preserve_existing_if_empty and not prepared_items and existing_rows:
+                _LOGGER.warning(
+                    "Existing family tree has %d SQLite people but no config subentries; "
+                    "preserving data to avoid destructive migration. Re-add the integration "
+                    "after backing up /config/cay_gia_pha/ to restore person editors",
+                    len(existing_rows),
+                )
+                return []
 
             stale_ids = set(existing_rows) - current_ids
             changed = bool(stale_ids)
@@ -514,7 +542,7 @@ class FamilyTreeStore:
         return await self.hass.async_add_executor_job(self._snapshot)
 
     def _snapshot(self) -> dict[str, Any]:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             rows = connection.execute(
                 """
                 SELECT * FROM persons
@@ -561,7 +589,7 @@ class FamilyTreeStore:
         return await self.hass.async_add_executor_job(self._person, person_id)
 
     def _person(self, person_id: str) -> dict[str, Any] | None:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             row = connection.execute(
                 "SELECT * FROM persons WHERE person_id = ?", (person_id,)
             ).fetchone()
@@ -585,7 +613,7 @@ class FamilyTreeStore:
         if not self.database_path.exists():
             return []
         try:
-            with self._connect() as connection:
+            with closing(self._connect()) as connection, connection:
                 rows = connection.execute(
                     """
                     SELECT * FROM persons
@@ -596,7 +624,8 @@ class FamilyTreeStore:
                     """
                 ).fetchall()
         except sqlite3.Error:
-            return []
+            _LOGGER.exception("Cannot read existing family tree; refusing to treat it as empty")
+            raise
         return _normalize_people_relationships([_row_to_person(row) for row in rows])
 
     async def async_export_json(self) -> str:

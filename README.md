@@ -6,7 +6,7 @@
 
 Tích hợp tùy chỉnh giúp lưu trữ, quản lý và hiển thị cây gia phả trực tiếp trong Home Assistant. Dữ liệu được lưu cục bộ, có giao diện thêm/chỉnh sửa từng cá thể và một thẻ Lovelace riêng để xem toàn bộ sơ đồ.
 
-**Home Assistant tối thiểu:** `2025.3.0`
+**Home Assistant tối thiểu (bản cập nhật này):** `2026.11.0` — đã đối chiếu API với Home Assistant Core 2026.11.0.
 
 ## Tính năng
 
@@ -20,50 +20,38 @@ Tích hợp tùy chỉnh giúp lưu trữ, quản lý và hiển thị cây gia 
 - Bố cục nhiều vợ/chồng và các nhánh con được tính toán độc lập để hạn chế chồng chéo.
 - Tùy chỉnh tiêu đề, nội dung, phông chữ, màu sắc, kích thước ảnh và khoảng cách sơ đồ.
 - Có bản dịch tiếng Việt và tiếng Anh.
-- Dữ liệu sẽ được tạo folder tự động trong Home assistant trong `/home-assistant/config/cay_gia_pha/`. Bạn nên backup Home assistant hoặc copy folder này để lưu sau khi hoàn thành việc nhập dữ liệu để sau này cần có thể cài tích hợp và copy lại folder này sẽ lấy lại được dữ liệu đã nhập.
+- Cơ sở dữ liệu SQLite và ảnh được tạo tự động trong thư mục `cay_gia_pha/` dưới **thư mục cấu hình** Home Assistant (thường là `/config/cay_gia_pha/`). Hãy sao lưu thư mục này cùng cấu hình Home Assistant trước khi cập nhật.
 
 
 
 ---
 
-## Cài đặt
+## Cài đặt trên Marketplace (Home Assistant 2026.11+)
 
-### Cài tự động
+Home Assistant 2026.11 đã tích hợp HACS thành **Marketplace**. **Không cài lại HACS custom integration** trên Home Assistant 2026.11 trở lên.
 
-  - Nhấn nút bên dưới để thêm vào HACS trên Home Assistant.
+[![Mở repository trong Marketplace](https://my.home-assistant.io/badges/marketplace_repository.svg)](https://my.home-assistant.io/redirect/marketplace_repository/?owner=khaisilk1910&repository=cay-gia-pha&category=integration)
 
-  [![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=khaisilk1910&repository=cay-gia-pha&category=integration)
+1. Mở **Settings → Marketplace**; tìm **Cây Gia Phả**. Nếu chưa xuất hiện trong danh mục công khai, thêm `https://github.com/khaisilk1910/cay-gia-pha` trong **Custom repositories**, chọn loại **Integration**.
+2. Cài bản release tương ứng và khởi động lại Home Assistant khi Marketplace yêu cầu (đặc biệt khi cập nhật integration đã tải).
+3. Vào **Settings → Devices & services → Add integration**, tìm **Cây Gia Phả**.
+4. Thêm thẻ qua **Dashboard → Edit → Add card → Cây Gia Phả**. Thẻ Lovelace được phục vụ cùng integration, **không** phải cài lại như một HACS dashboard plugin riêng.
 
-  - Sau khi thêm trong HACS và khởi động lại Home Assistant
-     
-  - Vào Settings -> Integrations -> Add integration -> Tìm `Cây Gia Phả`
+### Cài thủ công / cập nhật từ bản trước
 
-## Cài đặt bằng HACS
+Chép `custom_components/cay_gia_pha/` vào `/config/custom_components/cay_gia_pha/` và khởi động lại Home Assistant. **Sao lưu cả `/config/cay_gia_pha/` và cấu hình Home Assistant trước khi nâng cấp.** Không xóa config entry và không xóa thư mục này khi cập nhật.
 
-1. Mở **HACS** → **Integrations**.
-2. Chọn menu ba chấm → **Custom repositories**.
-3. Nhập URL repository GitHub của bạn và chọn loại **Integration**.
-4. Tìm **Cây Gia Phả**, chọn **Download** rồi khởi động lại Home Assistant.
-5. Vào **Settings** → **Devices & services** → **Add integration** và tìm **Cây Gia Phả**.
+Nếu đã từng thêm tài nguyên thẻ bằng tay, vào **Dashboard → Resources** để xóa tài nguyên trùng có tiền tố `/cay_gia_pha_static/cay-gia-pha-card.js`, giữ lại một mục duy nhất. Với chế độ Lovelace YAML, nếu thẻ chưa tải, thêm module sau vào danh sách `resources` của YAML:
 
-## Cài đặt thủ công
-
-Sao chép thư mục:
-
-```text
-custom_components/cay_gia_pha
+```yaml
+resources:
+  - url: /cay_gia_pha_static/cay-gia-pha-card.js?v=2026.11.0
+    type: module
 ```
 
-vào thư mục cấu hình Home Assistant:
-
-```text
-/config/custom_components/cay_gia_pha
-```
-
-Sau đó khởi động lại Home Assistant và thêm tích hợp từ **Settings → Devices & services**.
+Trường hợp bình thường, integration đăng ký tài nguyên này tự động. Refresh trình duyệt sau khi cập nhật.
 
 ---
-
 
 ## Thiết lập cây gia phả
 
@@ -94,3 +82,20 @@ Trước khi tạo issue, hãy kiểm tra log Home Assistant và xóa thông tin
 ## Giấy phép
 
 Dự án được phát hành theo giấy phép [MIT](LICENSE).
+
+## Kiểm tra và chẩn đoán
+
+Bản này giảm công việc khởi động bằng cách chuyển đăng ký tài nguyên Lovelace sang tác vụ nền (không chặn việc tạo sensor), giữ truy cập SQLite trong executor và chỉ làm mới snapshot khi dữ liệu thay đổi. Việc tải SQLite lần đầu vẫn cần hoàn thành trước khi sensor có dữ liệu chính xác; không có cam kết khởi động bằng 0 ms.
+
+Để bật log chẩn đoán, thêm vào `configuration.yaml`:
+
+```yaml
+logger:
+  default: warning
+  logs:
+    custom_components.cay_gia_pha: debug
+```
+
+Nhật ký ghi thời gian tải, số người, số phiên bản dữ liệu và lỗi SQLite/Lovelace, không cố ý ghi tên/ảnh cá nhân. Có thể tắt `debug` sau khi kiểm tra. Nếu log báo cơ sở dữ liệu không đọc được hoặc còn người nhưng entry không có subentry, **không xóa `/config/cay_gia_pha/`**; sao lưu và xử lý nguyên nhân trước.
+
+Cập nhật bản release: trước khi tạo Git tag/release, sửa `manifest.json` sao cho `version` khớp với tag (bỏ tiền tố `v` nếu có). Tệp GitHub Actions sẽ kiểm tra, không tự di chuyển tag sau khi đã phát hành.

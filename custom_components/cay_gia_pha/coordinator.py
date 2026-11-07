@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from time import monotonic
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -49,8 +50,22 @@ class FamilyTreeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Return the current family-tree snapshot."""
+        started_at = monotonic()
         snapshot = await self.store.async_snapshot()
-        self._rebuild_relationship_indexes(snapshot.get("people", []))
+        indexes = await self.hass.async_add_executor_job(
+            _build_relationship_indexes, snapshot.get("people", [])
+        )
+        (
+            self._people_by_id,
+            self._spouse_ids_by_person,
+            self._sibling_ids_by_person,
+        ) = indexes
+        _LOGGER.debug(
+            "Family tree snapshot refreshed: people=%d revision=%s elapsed=%.3fs",
+            len(snapshot.get("people", [])),
+            snapshot.get("revision", 0),
+            monotonic() - started_at,
+        )
         return snapshot
 
     def person(self, person_id: str) -> dict[str, Any] | None:
@@ -65,73 +80,79 @@ class FamilyTreeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Return resolved sibling IDs without rescanning all people."""
         return self._sibling_ids_by_person.get(str(person_id), ())
 
-    def _rebuild_relationship_indexes(
-        self, people: list[dict[str, Any]]
-    ) -> None:
-        """Build fast person and relationship lookups once per refresh."""
-        by_id = {
-            str(person.get(CONF_PERSON_ID)): person
-            for person in people
-            if person.get(CONF_PERSON_ID)
-        }
-        spouse_lists: dict[str, list[str]] = {
-            person_id: [] for person_id in by_id
-        }
-        sibling_sets: dict[str, set[str]] = {
-            person_id: set() for person_id in by_id
-        }
+def _build_relationship_indexes(
+    people: list[dict[str, Any]],
+) -> tuple[
+    dict[str, dict[str, Any]],
+    dict[str, tuple[str, ...]],
+    dict[str, tuple[str, ...]],
+]:
+    """Build relationship indexes in an executor, returning immutable snapshots."""
+    by_id = {
+        str(person.get(CONF_PERSON_ID)): person
+        for person in people
+        if person.get(CONF_PERSON_ID)
+    }
+    spouse_lists: dict[str, list[str]] = {
+        person_id: [] for person_id in by_id
+    }
+    sibling_sets: dict[str, set[str]] = {
+        person_id: set() for person_id in by_id
+    }
 
-        for person_id, person in by_id.items():
-            spouse_ids = _string_ids(person.get(CONF_SPOUSE_IDS))
-            legacy_spouse_id = person.get(CONF_SPOUSE_ID)
-            if legacy_spouse_id:
-                spouse_ids.append(str(legacy_spouse_id))
-            for spouse_id in spouse_ids:
-                if spouse_id == person_id or spouse_id not in by_id:
-                    continue
-                if spouse_id not in spouse_lists[person_id]:
-                    spouse_lists[person_id].append(spouse_id)
-                if person_id not in spouse_lists[spouse_id]:
-                    spouse_lists[spouse_id].append(person_id)
-
-            for sibling_id in _string_ids(person.get(CONF_SIBLING_IDS)):
-                if sibling_id == person_id or sibling_id not in by_id:
-                    continue
-                sibling_sets[person_id].add(sibling_id)
-                sibling_sets[sibling_id].add(person_id)
-
-        parent_groups: dict[tuple[str, str], list[str]] = {}
-        for person_id, person in by_id.items():
-            father_id = str(person.get(CONF_FATHER_ID) or "")
-            mother_id = str(person.get(CONF_MOTHER_ID) or "")
-            if not father_id and not mother_id:
+    for person_id, person in by_id.items():
+        spouse_ids = _string_ids(person.get(CONF_SPOUSE_IDS))
+        legacy_spouse_id = person.get(CONF_SPOUSE_ID)
+        if legacy_spouse_id:
+            spouse_ids.append(str(legacy_spouse_id))
+        for spouse_id in spouse_ids:
+            if spouse_id == person_id or spouse_id not in by_id:
                 continue
-            parent_groups.setdefault((father_id, mother_id), []).append(person_id)
+            if spouse_id not in spouse_lists[person_id]:
+                spouse_lists[person_id].append(spouse_id)
+            if person_id not in spouse_lists[spouse_id]:
+                spouse_lists[spouse_id].append(person_id)
 
-        for group in parent_groups.values():
-            if len(group) < 2:
+        for sibling_id in _string_ids(person.get(CONF_SIBLING_IDS)):
+            if sibling_id == person_id or sibling_id not in by_id:
                 continue
-            group_set = set(group)
-            for person_id in group:
-                sibling_sets[person_id].update(group_set - {person_id})
+            sibling_sets[person_id].add(sibling_id)
+            sibling_sets[sibling_id].add(person_id)
 
-        def sibling_sort_key(person_id: str) -> tuple[int, int, str]:
-            person = by_id[person_id]
-            return (
-                _safe_int(person.get(CONF_BIRTH_ORDER), 999),
-                _safe_int(person.get(CONF_BIRTH_YEAR), 9999),
-                str(person.get(CONF_FULL_NAME, "")).casefold(),
-            )
+    parent_groups: dict[tuple[str, str], list[str]] = {}
+    for person_id, person in by_id.items():
+        father_id = str(person.get(CONF_FATHER_ID) or "")
+        mother_id = str(person.get(CONF_MOTHER_ID) or "")
+        if not father_id and not mother_id:
+            continue
+        parent_groups.setdefault((father_id, mother_id), []).append(person_id)
 
-        self._people_by_id = by_id
-        self._spouse_ids_by_person = {
+    for group in parent_groups.values():
+        if len(group) < 2:
+            continue
+        group_set = set(group)
+        for person_id in group:
+            sibling_sets[person_id].update(group_set - {person_id})
+
+    def sibling_sort_key(person_id: str) -> tuple[int, int, str]:
+        person = by_id[person_id]
+        return (
+            _safe_int(person.get(CONF_BIRTH_ORDER), 999),
+            _safe_int(person.get(CONF_BIRTH_YEAR), 9999),
+            str(person.get(CONF_FULL_NAME, "")).casefold(),
+        )
+
+    return (
+        by_id,
+        {
             person_id: tuple(spouse_ids)
             for person_id, spouse_ids in spouse_lists.items()
-        }
-        self._sibling_ids_by_person = {
+        },
+        {
             person_id: tuple(sorted(sibling_ids, key=sibling_sort_key))
             for person_id, sibling_ids in sibling_sets.items()
-        }
+        },
+    )
 
 
 def _string_ids(value: Any) -> list[str]:
